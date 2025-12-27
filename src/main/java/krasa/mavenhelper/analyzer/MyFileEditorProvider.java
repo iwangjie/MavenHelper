@@ -8,14 +8,10 @@ import com.intellij.openapi.fileEditor.FileEditorState;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
-import com.intellij.openapi.util.io.FileUtilRt;
 import com.intellij.openapi.vfs.VirtualFile;
-import com.intellij.util.ArrayUtil;
 import org.jdom.Element;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.idea.maven.model.MavenConstants;
-import org.jetbrains.idea.maven.project.MavenProject;
-import org.jetbrains.idea.maven.project.MavenProjectsManager;
 
 /**
  * @author Vojtech Krasa
@@ -25,25 +21,21 @@ public class MyFileEditorProvider implements FileEditorProvider, DumbAware {
 
 	@Override
 	public boolean accept(@NotNull final Project project, @NotNull final VirtualFile file) {
-		return isPomFile(project, file);
-	}
-
-
-	private boolean isPomFile(@NotNull final Project project, @NotNull final VirtualFile file) {
-		String name = file.getName();
-		if (!isPotentialPomFile(name)) return false;
-
-		MavenProjectsManager instance = MavenProjectsManager.getInstance(project);
-		final MavenProject mavenProject = instance == null ? null : instance.findProject(file);
-		if (mavenProject != null) {
-			return mavenProject.getFile().equals(file);
+		if (project.isDisposed()) {
+			return false;
 		}
-		return false;
+		if (!file.isInLocalFileSystem()) {
+			return false;
+		}
+		return isPomFileName(file.getName());
 	}
 
 
-	public static boolean isPotentialPomFile(String nameOrPath) {
-		return ArrayUtil.contains(FileUtilRt.getExtension(nameOrPath), MavenConstants.POM_EXTENSIONS);
+	private static boolean isPomFileName(@NotNull String name) {
+		// IMPORTANT: keep this method cheap and avoid touching MavenProjectsManager here.
+		// FileEditorProvider#accept may run inside a read action during startup/indexing;
+		// triggering MavenProjectsManager initialization here can cause UI freezes.
+		return MavenConstants.POM_XML.equalsIgnoreCase(name) || name.toLowerCase().endsWith(".pom");
 	}
 
 	@Override
@@ -75,7 +67,7 @@ public class MyFileEditorProvider implements FileEditorProvider, DumbAware {
 	@Override
 	@NotNull
 	public String getEditorTypeId() {
-		return "MavenHelperPluginDependencyAnalyzer";
+		return "MavenHelperProPluginDependencyAnalyzer";
 	}
 
 	@Override

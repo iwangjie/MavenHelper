@@ -37,7 +37,7 @@ import java.util.Objects;
 public abstract class BaseAction extends DumbAwareAction {
 	private static final Logger LOG = Logger.getInstance(BaseAction.class);
 
-	public static final String MAVEN_HELPER_DEPENDENCY_ANALYZER_NOTIFICATION = "Maven Helper - Dependency Analyzer - notification";
+	public static final String MAVEN_HELPER_DEPENDENCY_ANALYZER_NOTIFICATION = "Maven Helper Pro - Dependency Analyzer - notification";
 
 	protected final Project myProject;
 	protected final MavenProject myMavenProject;

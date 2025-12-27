@@ -74,15 +74,15 @@ public class ProgramRunnerUtils {
 		}
 	}
 
-	public static void executeInTerminal(MavenRunnerParameters params, Project project, ApplicationSettings applicationSettings) {
-		if (!isShellEnabled()) {
-			com.intellij.openapi.ui.Messages.showErrorDialog(project, "Shell Script plugin not enabled, enable it and restart the IDE (or disable using Terminal in Settings | Maven Helper)", "Maven Helper");
-			return;
-		}
-		if (!OpenTerminalAction.isTerminalEnabled()) {
-			com.intellij.openapi.ui.Messages.showErrorDialog(project, "Terminal plugin not enabled, enable it and restart the IDE (or disable using Terminal in Settings | Maven Helper)", "Maven Helper");
-			return;
-		}
+		public static void executeInTerminal(MavenRunnerParameters params, Project project, ApplicationSettings applicationSettings) {
+			if (!isShellEnabled()) {
+				com.intellij.openapi.ui.Messages.showErrorDialog(project, "Shell Script plugin not enabled, enable it and restart the IDE (or disable using Terminal in Settings | Maven Helper Pro)", "Maven Helper Pro");
+				return;
+			}
+			if (!OpenTerminalAction.isTerminalEnabled()) {
+				com.intellij.openapi.ui.Messages.showErrorDialog(project, "Terminal plugin not enabled, enable it and restart the IDE (or disable using Terminal in Settings | Maven Helper Pro)", "Maven Helper Pro");
+				return;
+			}
 
 //		#95 The goal content should be passed to the terminal as is.
 //		String commandLine = params.getCommandLine();
@@ -95,11 +95,11 @@ public class ProgramRunnerUtils {
 		RunnerAndConfigurationSettings configurationSettings = RunManager.getInstance(project).createConfiguration(applicationSettings.getTerminalCommand() + " " + commandLine, ShConfigurationType.class);
 		RunConfiguration configuration = configurationSettings.getConfiguration();
 		if (!(configuration instanceof ShRunConfiguration)) {
-			PluginDescriptor pluginByClass = PluginManager.getPluginByClass(configuration.getClass());
-			String name = pluginByClass == null ? "unknown" : pluginByClass.getName();
-			com.intellij.openapi.ui.Messages.showErrorDialog(project, "Conflict detected with plugin: " + name + " (disable using Terminal in Settings | Maven Helper)", "Maven Helper");
-			return;
-		}
+				PluginDescriptor pluginByClass = PluginManager.getPluginByClass(configuration.getClass());
+				String name = pluginByClass == null ? "unknown" : pluginByClass.getName();
+				com.intellij.openapi.ui.Messages.showErrorDialog(project, "Conflict detected with plugin: " + name + " (disable using Terminal in Settings | Maven Helper Pro)", "Maven Helper Pro");
+				return;
+			}
 		ShRunConfiguration runConfiguration = (ShRunConfiguration) configurationSettings.getConfiguration();
 		runConfiguration.setScriptPath(applicationSettings.getTerminalCommand());
 		runConfiguration.setScriptOptions(commandLine);

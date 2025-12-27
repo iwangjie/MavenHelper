@@ -10,10 +10,14 @@ import com.intellij.openapi.actionSystem.ActionToolbar;
 import com.intellij.openapi.actionSystem.DefaultActionGroup;
 import com.intellij.openapi.actionSystem.ex.ActionManagerEx;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.progress.ProgressIndicator;
+import com.intellij.openapi.progress.ProgressManager;
+import com.intellij.openapi.progress.Task;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Pair;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.Alarm;
 import com.intellij.ui.*;
 import com.intellij.ui.components.JBList;
 import krasa.mavenhelper.Donate;
@@ -65,17 +69,22 @@ public class GuiForm implements Disposable {
 			return o1.getArtifact().getArtifactId().compareToIgnoreCase(o2.getArtifact().getArtifactId());
 		}
 	};
-	private static final String LAST_RADIO_BUTTON = "MavenHelper.lastRadioButton";
-	private static final String LAST_SHOW_GROUP_ID_CHECKBOX = "MavenHelper.lastShowGroupIdCheckBox";
-	private static final String LAST_SHOW_SIZE_CHECKBOX = "MavenHelper.lastShowSizeCheckBox";
-	private static final String LAST_FILTER_CHECKBOX = "MavenHelper.lastFilterCheckBox";
-	private static final String LAST_HIDE_TESTS_CHECKBOX = "MavenHelper.lastHideTestsCheckBox";
+	private static final String LAST_RADIO_BUTTON = "MavenHelperPro.lastRadioButton";
+	private static final String LAST_SHOW_GROUP_ID_CHECKBOX = "MavenHelperPro.lastShowGroupIdCheckBox";
+	private static final String LAST_SHOW_SIZE_CHECKBOX = "MavenHelperPro.lastShowSizeCheckBox";
+	private static final String LAST_FILTER_CHECKBOX = "MavenHelperPro.lastFilterCheckBox";
+	private static final String LAST_HIDE_TESTS_CHECKBOX = "MavenHelperPro.lastHideTestsCheckBox";
 	public static final SimpleTextAttributes SIZE_ATTRIBUTES = SimpleTextAttributes.GRAY_ATTRIBUTES;
+
+	private static final int UPDATE_DEBOUNCE_MS = 150;
+	private static final int AUTO_EXPAND_NODE_LIMIT = 2000;
 
 	private final Project project;
 	private final VirtualFile file;
 	private final MavenHelperApplicationService applicationService = MavenHelperApplicationService.getInstance();
 	private MavenProject mavenProject;
+	private final Alarm updateAlarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, this);
+	private volatile boolean modelLoading;
 	protected JBList leftPanelList;
 	private MyHighlightingTree rightTree;
 	private JPanel rootPanel;
@@ -112,6 +121,9 @@ public class GuiForm implements Disposable {
 	protected List<MavenArtifactNode> dependencyTree;
 	protected List<MavenArtifactNode> dependencyTreeWithoutTests;
 	protected CardLayout leftPanelLayout;
+	private List<MyListNode> allArtifactsListNodes = Collections.emptyList();
+	private List<MyListNode> allArtifactsListNodesWithoutTests = Collections.emptyList();
+	private List<MyListNode> conflictArtifactsListNodes = Collections.emptyList();
 
 	private boolean notificationShown;
 
@@ -171,7 +183,7 @@ public class GuiForm implements Disposable {
 		final ActionListener radioButtonListener = new ActionListener() {
 			@Override
 			public void actionPerformed(ActionEvent e) {
-				updateLeftPanel();
+				scheduleUpdateLeftPanel();
 
 				String value = null;
 				if (allDependenciesAsListRadioButton.isSelected()) {
@@ -201,7 +213,7 @@ public class GuiForm implements Disposable {
 		searchField.addDocumentListener(new DocumentAdapter() {
 			@Override
 			protected void textChanged(DocumentEvent documentEvent) {
-				updateLeftPanel();
+				scheduleUpdateLeftPanel();
 			}
 		});
 		try {
@@ -259,37 +271,33 @@ public class GuiForm implements Disposable {
 
 		showGroupId.addActionListener((event) -> {
 			final RestoreSelection restoreSelection = new RestoreSelection(leftPanelList, leftTree);
-			updateLeftPanel();
-			restoreSelection.restore();
 			PropertiesComponent.getInstance().setValue(LAST_SHOW_GROUP_ID_CHECKBOX, showGroupId.isSelected());
+			scheduleUpdateLeftPanel(restoreSelection::restore);
 		});
 
 		showSize.addActionListener((event) -> {
 			RestoreSelection restoreSelection = new RestoreSelection(leftPanelList, leftTree);
-			updateLeftPanel();
-			restoreSelection.restore();
 			PropertiesComponent.getInstance().setValue(LAST_SHOW_SIZE_CHECKBOX, showSize.isSelected());
+			scheduleUpdateLeftPanel(restoreSelection::restore);
 		});
 
 		filter.addActionListener((event) -> {
 			RestoreSelection restoreSelection = new RestoreSelection(leftPanelList, leftTree);
-			updateLeftPanel();
-			restoreSelection.restore();
 			PropertiesComponent.getInstance().setValue(LAST_FILTER_CHECKBOX, filter.isSelected());
+			scheduleUpdateLeftPanel(restoreSelection::restore);
 		});
 
 		hideTests.addActionListener((event) -> {
 			RestoreSelection restoreSelection = new RestoreSelection(leftPanelList, leftTree);
-			updateLeftPanel();
-			restoreSelection.restore();
 			PropertiesComponent.getInstance().setValue(LAST_HIDE_TESTS_CHECKBOX, hideTests.isSelected());
+			scheduleUpdateLeftPanel(restoreSelection::restore);
 		});
 
 		final DefaultTreeExpander treeExpander = new DefaultTreeExpander(leftTree);
 		DefaultActionGroup actionGroup = new DefaultActionGroup();
 		actionGroup.add(CommonActionsManager.getInstance().createExpandAllAction(treeExpander, leftTree));
 		actionGroup.add(CommonActionsManager.getInstance().createCollapseAllAction(treeExpander, leftTree));
-		ActionToolbar actionToolbar = ActionManagerEx.getInstance().createActionToolbar("krasa.MavenHelper.buttons", actionGroup, true);
+		ActionToolbar actionToolbar = ActionManagerEx.getInstance().createActionToolbar("krasa.MavenHelperPro.buttons", actionGroup, true);
 		actionToolbar.setTargetComponent(rootPanel);
 		buttonsPanel.add(actionToolbar.getComponent(), "1");
 		errorBoldAttributes = new SimpleTextAttributes(SimpleTextAttributes.STYLE_BOLD, applicationService.getState().getErrorAttributes().getFgColor());
@@ -378,7 +386,8 @@ public class GuiForm implements Disposable {
 	public void switchToLeftTree(MavenArtifactNode myArtifact) {
 		allDependenciesAsTreeRadioButton.setSelected(true);
 		searchField.setText(myArtifact.getArtifact().getArtifactId());
-		updateLeftPanel();
+		updateAlarm.cancelAllRequests();
+		updateLeftPanelNow();
 
 		TreeUtils.selectRows(leftTree, leftTreeRoot, myArtifact);
 		leftTree.requestFocus();
@@ -446,29 +455,155 @@ public class GuiForm implements Disposable {
 	}
 
 	private void initializeModel() {
+		if (modelLoading) {
+			return;
+		}
+		updateAlarm.cancelAllRequests();
+
 		intellijBugLabel.setVisible(false);
 		falsePositive.setVisible(false);
 		rightTreePopupHandler.hidePopup();
 		leftTreePopupHandler.hidePopup();
-		
+
 		final Object selectedValue = leftPanelList.getSelectedValue();
 
-		dependencyTree = mavenProject.getDependencyTree();
-		dependencyTreeWithoutTests = dependencyTree.stream().filter(n -> !"test".equals(n.getArtifact().getScope())).toList();
-		allArtifactsMap = createAllArtifactsMap(dependencyTree, false);
-		allArtifactsMapWithoutTests = createAllArtifactsMap(dependencyTree, true);
-		updateLeftPanel();
+		modelLoading = true;
+		setLoadingUi(true);
+		ProgressManager.getInstance().run(new Task.Backgroundable(project, "Maven Helper Pro: Building dependency model", true) {
+			private List<MavenArtifactNode> newDependencyTree;
+			private List<MavenArtifactNode> newDependencyTreeWithoutTests;
+			private Map<String, List<MavenArtifactNode>> newAllArtifactsMap;
+			private Map<String, List<MavenArtifactNode>> newAllArtifactsMapWithoutTests;
+			private List<MyListNode> newAllArtifactsListNodes;
+			private List<MyListNode> newAllArtifactsListNodesWithoutTests;
+			private List<MyListNode> newConflictArtifactsListNodes;
+			private long buildNanos;
 
-		rightTreeRoot.removeAllChildren();
-		rightTreeModel.reload();
-		leftPanelWrapper.revalidate();
+			@Override
+			public void run(@NotNull ProgressIndicator indicator) {
+				long start = System.nanoTime();
 
-		if (selectedValue != null) {
-			leftPanelList.setSelectedValue(selectedValue, true);
-		}
+				newDependencyTree = mavenProject.getDependencyTree();
+				indicator.checkCanceled();
+
+				newDependencyTreeWithoutTests = newDependencyTree.stream()
+					.filter(n -> !"test".equals(n.getArtifact().getScope()))
+					.toList();
+				indicator.checkCanceled();
+
+				newAllArtifactsMap = createAllArtifactsMap(newDependencyTree, false);
+				indicator.checkCanceled();
+				newAllArtifactsMapWithoutTests = createAllArtifactsMap(newDependencyTree, true);
+				indicator.checkCanceled();
+
+				newAllArtifactsListNodes = createListNodes(newAllArtifactsMap);
+				newAllArtifactsListNodesWithoutTests = createListNodes(newAllArtifactsMapWithoutTests);
+				newConflictArtifactsListNodes = createVersionConflictListNodes(newAllArtifactsListNodes);
+
+				buildNanos = System.nanoTime() - start;
+			}
+
+			@Override
+			public void onSuccess() {
+				modelLoading = false;
+				setLoadingUi(false);
+
+				if (project.isDisposed()) {
+					return;
+				}
+
+				dependencyTree = newDependencyTree;
+				dependencyTreeWithoutTests = newDependencyTreeWithoutTests;
+				allArtifactsMap = newAllArtifactsMap;
+				allArtifactsMapWithoutTests = newAllArtifactsMapWithoutTests;
+				allArtifactsListNodes = newAllArtifactsListNodes;
+				allArtifactsListNodesWithoutTests = newAllArtifactsListNodesWithoutTests;
+				conflictArtifactsListNodes = newConflictArtifactsListNodes;
+
+				updateAlarm.cancelAllRequests();
+				updateLeftPanelNow();
+
+				rightTreeRoot.removeAllChildren();
+				rightTreeModel.reload();
+				leftPanelWrapper.revalidate();
+
+				if (selectedValue != null) {
+					leftPanelList.setSelectedValue(selectedValue, true);
+				}
+
+				if (LOG.isDebugEnabled()) {
+					LOG.debug("Dependency model built in " + (buildNanos / 1_000_000) + " ms for " + file.getPath());
+				}
+			}
+
+			@Override
+			public void onCancel() {
+				modelLoading = false;
+				setLoadingUi(false);
+			}
+
+			@Override
+			public void onThrowable(@NotNull Throwable error) {
+				modelLoading = false;
+				setLoadingUi(false);
+				LOG.warn("Failed to build Maven Helper Pro dependency model for " + file.getPath(), error);
+			}
+		});
 	}
 
-	private void updateLeftPanel() {
+	private void setLoadingUi(boolean loading) {
+		rootPanel.setCursor(loading ? Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR) : Cursor.getDefaultCursor());
+		refreshButton.setEnabled(!loading);
+		searchField.setEnabled(!loading);
+	}
+
+	private void scheduleUpdateLeftPanel() {
+		scheduleUpdateLeftPanel(null);
+	}
+
+	private void scheduleUpdateLeftPanel(@Nullable Runnable afterUpdate) {
+		if (modelLoading || dependencyTree == null) {
+			return;
+		}
+		updateAlarm.cancelAllRequests();
+		updateAlarm.addRequest(() -> {
+			updateLeftPanelNow();
+			if (afterUpdate != null) {
+				afterUpdate.run();
+			}
+		}, UPDATE_DEBOUNCE_MS);
+	}
+
+	private static List<MyListNode> createListNodes(@Nullable Map<String, List<MavenArtifactNode>> map) {
+		if (map == null || map.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<MyListNode> result = new ArrayList<>(map.size());
+		for (Map.Entry<String, List<MavenArtifactNode>> entry : map.entrySet()) {
+			result.add(new MyListNode(entry));
+		}
+		return result;
+	}
+
+	private List<MyListNode> createVersionConflictListNodes(@Nullable List<MyListNode> listNodes) {
+		if (listNodes == null || listNodes.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<MyListNode> result = new ArrayList<>();
+		for (MyListNode node : listNodes) {
+			List<MavenArtifactNode> nodes = node.getArtifacts();
+			if (nodes != null && nodes.size() > 1 && hasConflicts(nodes)) {
+				result.add(node);
+			}
+		}
+		return result;
+	}
+
+	private void updateLeftPanelNow() {
+		if (allArtifactsMap == null || dependencyTree == null) {
+			return;
+		}
+
 		intellijBugLabel.setVisible(false);
 		falsePositive.setVisible(false);
 		listDataModel.clear();
@@ -479,31 +614,32 @@ public class GuiForm implements Disposable {
 
 		boolean showNoConflictsLabel = false;
 		if (conflictsRadioButton.isSelected()) {
-			for (Map.Entry<String, List<MavenArtifactNode>> s : allArtifactsMap.entrySet()) {
-				final List<MavenArtifactNode> nodes = s.getValue();
-				if (nodes.size() > 1 && hasConflicts(nodes)) {
-					if (contains(searchFieldText, s.getKey())) {
-						listDataModel.add(new MyListNode(s));
-					}
+			for (MyListNode node : conflictArtifactsListNodes) {
+				if (contains(searchFieldText, node.artifactKey)) {
+					listDataModel.add(node);
 				}
 			}
 			sortList();
 			showNoConflictsLabel = isNoConflicts();
 			leftPanelLayout.show(leftPanelWrapper, "list");
 		} else if (allDependenciesAsListRadioButton.isSelected()) {  //list
-			for (Map.Entry<String, List<MavenArtifactNode>> s : hideTests.isSelected() ? allArtifactsMapWithoutTests.entrySet() : allArtifactsMap.entrySet()) {
-				if (contains(searchFieldText, s.getKey())) {
-					listDataModel.add(new MyListNode(s));
+			List<MyListNode> nodes = hideTests.isSelected() ? allArtifactsListNodesWithoutTests : allArtifactsListNodes;
+			for (MyListNode node : nodes) {
+				if (contains(searchFieldText, node.artifactKey)) {
+					listDataModel.add(node);
 				}
 			}
 			sortList();
 			showNoConflictsLabel = false;
 			leftPanelLayout.show(leftPanelWrapper, "list");
 		} else { // tree
-			fillLeftTree(leftTreeRoot, hideTests.isSelected() ? dependencyTreeWithoutTests : dependencyTree, searchFieldText, false);
+			NodeCounter nodeCounter = new NodeCounter();
+			fillLeftTree(leftTreeRoot, hideTests.isSelected() ? dependencyTreeWithoutTests : dependencyTree, searchFieldText, false, nodeCounter);
 			sortTree();
 			leftTreeModel.nodeStructureChanged(leftTreeRoot);
-			TreeUtils.expandAll(leftTree);
+			if (nodeCounter.count <= AUTO_EXPAND_NODE_LIMIT) {
+				TreeUtils.expandAll(leftTree);
+			}
 
 			showNoConflictsLabel = false;
 			leftPanelLayout.show(leftPanelWrapper, "allAsTree");
@@ -525,15 +661,7 @@ public class GuiForm implements Disposable {
 	}
 
 	private boolean isNoConflicts() {
-		boolean hasNoConflicts = true;
-		for (Map.Entry<String, List<MavenArtifactNode>> s : allArtifactsMap.entrySet()) {
-			final List<MavenArtifactNode> nodes = s.getValue();
-			if (nodes.size() > 1 && hasConflicts(nodes)) {
-				hasNoConflicts = false;
-				break;
-			}
-		}
-		return hasNoConflicts;
+		return conflictArtifactsListNodes.isEmpty();
 	}
 
 	private void sortTree() {
@@ -556,7 +684,11 @@ public class GuiForm implements Disposable {
 		}
 	}
 
-	private boolean fillLeftTree(DefaultMutableTreeNode parent, List<MavenArtifactNode> dependencyTree, String searchFieldText, boolean parentMatched) {
+	private static final class NodeCounter {
+		private int count;
+	}
+
+	private boolean fillLeftTree(DefaultMutableTreeNode parent, List<MavenArtifactNode> dependencyTree, String searchFieldText, boolean parentMatched, NodeCounter nodeCounter) {
 		boolean search = StringUtils.isNotBlank(searchFieldText);
 		boolean hasAddedNodes = false;
 
@@ -568,10 +700,11 @@ public class GuiForm implements Disposable {
 				treeUserObject.highlight = true;
 			}
 			final DefaultMutableTreeNode newNode = new MyDefaultMutableTreeNode(treeUserObject);
-			boolean childAdded = fillLeftTree(newNode, mavenArtifactNode.getDependencies(), searchFieldText, directMatch || parentMatched);
+			boolean childAdded = fillLeftTree(newNode, mavenArtifactNode.getDependencies(), searchFieldText, directMatch || parentMatched, nodeCounter);
 
 			if (!search || !filter.isSelected() || directMatch || childAdded || parentMatched) {
 				parent.add(newNode);
+				nodeCounter.count++;
 				hasAddedNodes = true;
 			}
 		}

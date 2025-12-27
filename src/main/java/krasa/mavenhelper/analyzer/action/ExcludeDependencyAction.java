@@ -85,7 +85,7 @@ public abstract class ExcludeDependencyAction extends BaseAction {
 					}
 				});
 			}
-		}, "Exclude", "MavenRunHelper");
+		}, "Exclude", "MavenRunHelperPro");
 	}
 
 	public abstract void dependencyExcluded();

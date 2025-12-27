@@ -22,7 +22,7 @@ public class MyConfigurable implements Configurable {
 	@Override
 	@Nls
 	public String getDisplayName() {
-		return "Maven Helper";
+		return "Maven Helper Pro";
 	}
 
 	@Override

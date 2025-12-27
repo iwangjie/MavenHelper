@@ -48,8 +48,8 @@ public class GoalEditor extends DialogWrapper {
 
 	private static final Logger LOG = Logger.getInstance(GoalEditor.class);
 
-	public static final String SAVE = "MavenRunHelper.GoalEditor.save";
-	public static final String DIMENSION = "MavenRunHelper.GoalEditor";
+	public static final String SAVE = "MavenRunHelperPro.GoalEditor.save";
+	public static final String DIMENSION = "MavenRunHelperPro.GoalEditor";
 
 	private JPanel optionsPanel;
 	private JPanel cmdPanel;

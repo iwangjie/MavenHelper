@@ -68,7 +68,7 @@ public class RemoveDependencyAction extends BaseAction {
 					}
 				});
 			}
-		}, "Remove", "MavenRunHelper");
+		}, "Remove", "MavenRunHelperPro");
 	}
 
 	public void dependencyDeleted() {

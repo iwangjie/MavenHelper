@@ -34,7 +34,7 @@ import java.util.stream.IntStream;
  */
 public class AliasRealEditor extends DialogWrapper {
 
-    private static final String PROPERTIES_KEY = "MavenHelper.AliasRealEditor.";
+    private static final String PROPERTIES_KEY = "MavenHelperPro.AliasRealEditor.";
 
     private static final Set<String> ALIAS = Set.of(ApplicationSettings.MODULES, ApplicationSettings.VERSION);
 

@@ -19,7 +19,7 @@ import krasa.mavenhelper.model.Goal;
 import org.apache.commons.text.WordUtils;
 import org.jetbrains.annotations.NotNull;
 
-@State(name = "MavenRunHelper", storages = {@Storage("mavenRunHelper.xml")})
+@State(name = "MavenRunHelperPro", storages = {@Storage("mavenRunHelperPro.xml")})
 public class MavenHelperApplicationService implements PersistentStateComponent<ApplicationSettings> {
 	static final Logger LOG = Logger.getInstance(MavenHelperApplicationService.class);
 
@@ -41,8 +41,8 @@ public class MavenHelperApplicationService implements PersistentStateComponent<A
 			actionId = getDebugActionId(goal);
 			registerAction(instance, actionId, DebugGoalAction.createDebug(goal, MyIcons.PLUGIN_GOAL, false, null));
 		}
-		registerAction(instance, "krasa.MavenHelper.RunTestFileAction", new RunTestFileAction().alwaysVisible());
-		registerAction(instance, "krasa.MavenHelper.DebugTestFileAction", new DebugTestFileAction().alwaysVisible());
+		registerAction(instance, "krasa.MavenHelperPro.RunTestFileAction", new RunTestFileAction().alwaysVisible());
+		registerAction(instance, "krasa.MavenHelperPro.DebugTestFileAction", new DebugTestFileAction().alwaysVisible());
 	}
 
 	public void unRegisterActions() {
@@ -60,7 +60,7 @@ public class MavenHelperApplicationService implements PersistentStateComponent<A
 
 	private void registerAction(ActionManager instance, String actionId1, AnAction runGoalAction) {
 		unRegisterAction(instance, actionId1);
-		instance.registerAction(actionId1, runGoalAction, PluginId.getId("MavenRunHelper"));
+		instance.registerAction(actionId1, runGoalAction, PluginId.getId("MavenRunHelperPro"));
 	}
 
 	private void unRegisterAction(ActionManager instance, String actionId) {
@@ -68,11 +68,11 @@ public class MavenHelperApplicationService implements PersistentStateComponent<A
 	}
 
 	private String getActionId(Goal goal) {
-		return "MavenRunHelper" + WordUtils.capitalizeFully(goal.getCommandLine()).replaceAll(" ", "");
+		return "MavenRunHelperPro" + WordUtils.capitalizeFully(goal.getCommandLine()).replaceAll(" ", "");
 	}
 
 	private String getDebugActionId(Goal goal) {
-		return "MavenRunHelperDebug" + WordUtils.capitalizeFully(goal.getCommandLine()).replaceAll(" ", "");
+		return "MavenRunHelperProDebug" + WordUtils.capitalizeFully(goal.getCommandLine()).replaceAll(" ", "");
 
 	}
 
@@ -82,7 +82,7 @@ public class MavenHelperApplicationService implements PersistentStateComponent<A
 		DefaultActionGroup projectViewPopupMenuRunGroup = (DefaultActionGroup) ActionManager.getInstance().getAction(
 				"ProjectViewPopupMenuRunGroup");
 		DefaultActionGroup mavenHelperBaseProjectMenu = (DefaultActionGroup) ActionManager.getInstance().getAction(
-				"MavenHelper.BaseProjectMenu");
+				"MavenHelperPro.BaseProjectMenu");
 		clear(editorPopupMenu, projectViewPopupMenuRunGroup, mavenHelperBaseProjectMenu, name);
 
 		// Now it splatted to standalone blocks, so actions can be initialized separately.
@@ -117,7 +117,7 @@ public class MavenHelperApplicationService implements PersistentStateComponent<A
 	private void clear(DefaultActionGroup editorPopupMenu, String name) {
 		AnAction[] childActionsOrStubs = editorPopupMenu.getChildActionsOrStubs();
 		for (AnAction childActionsOrStub : childActionsOrStubs) {
-			if (name.equals(childActionsOrStub.getTemplatePresentation().getText())) {
+			if (childActionsOrStub instanceof MainMavenActionGroup && name.equals(childActionsOrStub.getTemplatePresentation().getText())) {
 				editorPopupMenu.remove(childActionsOrStub);
 			}
 		}

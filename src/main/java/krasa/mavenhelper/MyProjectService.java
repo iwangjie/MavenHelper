@@ -40,9 +40,15 @@ public class MyProjectService {
 
 			@Override
 			public void projectResolved(@NotNull Pair<MavenProject, MavenProjectChanges> projectWithChanges, @Nullable NativeMavenProjectHolder nativeMavenProject) {
+				if (myEventListeners.isEmpty()) {
+					return;
+				}
 				SwingUtilities.invokeLater(new Runnable() {
 					@Override
 					public void run() {
+						if (project.isDisposed()) {
+							return;
+						}
 						for (MyEventListener myEventListener : myEventListeners) {
 							myEventListener.projectResolved(projectWithChanges, nativeMavenProject);
 						}

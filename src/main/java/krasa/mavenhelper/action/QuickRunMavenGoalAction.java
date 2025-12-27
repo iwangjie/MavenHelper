@@ -321,7 +321,7 @@ public class QuickRunMavenGoalAction extends QuickSwitchSchemeAction implements 
 					}
 				};
 
-				return AnActionEvent.createFromDataContext("MavenRunHelper.CreateRunConfiguration", e.getPresentation(), dataContext);
+				return AnActionEvent.createFromDataContext("MavenRunHelperPro.CreateRunConfiguration", e.getPresentation(), dataContext);
 			}
 		}
 	}

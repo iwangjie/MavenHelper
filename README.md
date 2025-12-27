@@ -1,4 +1,4 @@
-Maven Helper  [![Donate][badge-paypal-img]][badge-paypal]
+Maven Helper Pro  [![Donate][badge-paypal-img]][badge-paypal]
 ==================
 
 IntelliJ Plugin - https://plugins.jetbrains.com/plugin/7179
