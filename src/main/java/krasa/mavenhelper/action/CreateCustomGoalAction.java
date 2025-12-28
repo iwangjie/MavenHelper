@@ -6,13 +6,13 @@ import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.DataContext;
 import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.psi.PsiFile;
 import krasa.mavenhelper.MavenHelperApplicationService;
 import krasa.mavenhelper.gui.GoalEditor;
 import krasa.mavenhelper.icons.MyIcons;
 import krasa.mavenhelper.model.ApplicationSettings;
 import krasa.mavenhelper.model.Goal;
-import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.maven.project.MavenProjectsManager;
@@ -49,7 +49,7 @@ public class CreateCustomGoalAction extends MyAnAction {
 		GoalEditor editor = new GoalEditor("Create and Run", "", state, true, e.getProject(), e.getDataContext());
 		if (editor.showAndGet()) {
 			String s = editor.getCmd();
-			if (StringUtils.isNotBlank(s)) {
+			if (!StringUtil.isEmptyOrSpaces(s)) {
 
 				Goal goal = new Goal(s);
 

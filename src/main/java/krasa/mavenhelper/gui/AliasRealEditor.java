@@ -10,10 +10,6 @@ import com.intellij.util.ui.FormBuilder;
 import com.intellij.util.ui.JBUI;
 import krasa.mavenhelper.action.MavenProjectInfo;
 import krasa.mavenhelper.model.ApplicationSettings;
-import org.apache.commons.collections.CollectionUtils;
-import org.apache.commons.collections.MapUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Validate;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.maven.project.MavenProject;
@@ -49,7 +45,7 @@ public class AliasRealEditor extends DialogWrapper {
 
     public AliasRealEditor(String command, @NotNull MavenProjectInfo mavenProjectInfo, @NotNull MavenProjectsManager manager) {
         super(false);
-        MavenProject mavenProject = Validate.notNull(mavenProjectInfo.getCurrentOrRootMavenProject(), "Maven project not found");
+        MavenProject mavenProject = Objects.requireNonNull(mavenProjectInfo.getCurrentOrRootMavenProject(), "Maven project not found");
         this.mavenProject = mavenProject;
         if (command.contains(ApplicationSettings.MODULES)) {
             Collection<MavenProject> projects = manager.findInheritors(mavenProject);
@@ -57,7 +53,7 @@ public class AliasRealEditor extends DialogWrapper {
             this.modules.setItems(new ArrayList<>(projects), MavenProject::getDisplayName);
             List<String> lastSelected = PropertiesComponent.getInstance().getList(PROPERTIES_KEY + mavenProject.getDisplayName());
             // history
-            if (CollectionUtils.isNotEmpty(lastSelected)) {
+            if (lastSelected != null && !lastSelected.isEmpty()) {
                 Set<String> lastSelectedSet = new HashSet<>(lastSelected);
                 for (MavenProject project : projects) {
                     if (lastSelectedSet.contains(project.getDisplayName())) {
@@ -69,12 +65,12 @@ public class AliasRealEditor extends DialogWrapper {
             }
         }
         if (command.contains(ApplicationSettings.VERSION)) {
-            String version = StringUtils.defaultString(mavenProject.getMavenId().getVersion());
+            String version = Objects.toString(mavenProject.getMavenId().getVersion(), "");
             this.versionField = new JBTextField(version);
             this.versionSuggests = new ArrayList<>();
             this.versionSuggests.add(version);
-            if (StringUtils.endsWith(version, "-SNAPSHOT")) {
-                this.versionSuggests.add(StringUtils.removeEnd(version, "-SNAPSHOT"));
+            if (version.endsWith("-SNAPSHOT")) {
+                this.versionSuggests.add(version.substring(0, version.length() - "-SNAPSHOT".length()));
                 this.versionSuggests.add(version.substring(0, version.length() - 9) + "-preon-SNAPSHOT");
                 this.versionSuggests.add(version.substring(0, version.length() - 9) + "-PREON-SNAPSHOT");
             } else {
@@ -94,7 +90,7 @@ public class AliasRealEditor extends DialogWrapper {
     }
 
     public static boolean needEditor(String command) {
-        if (StringUtils.isBlank(command)) {
+        if (command == null || command.isBlank()) {
             return false;
         }
         if (ALIAS.stream().anyMatch(command::contains)) {
@@ -138,7 +134,7 @@ public class AliasRealEditor extends DialogWrapper {
             BorderLayoutPanel panel = BorderLayoutPanel.getInstance(0, 0).center(versionField).right(suggestButton());
             builder.addLabeledComponent("$version$ = ", panel);
         }
-        if (MapUtils.isNotEmpty(editorFields)) {
+        if (!editorFields.isEmpty()) {
             editorFields.forEach(builder::addLabeledComponent);
         }
         builder.addVerticalGap(-1);
@@ -170,7 +166,7 @@ public class AliasRealEditor extends DialogWrapper {
         if (modules != null) {
             List<String> lastSelected = getSelectModules().stream().map(MavenProject::getDisplayName)
                     .collect(Collectors.toList());
-            if (CollectionUtils.isNotEmpty(lastSelected)) {
+            if (!lastSelected.isEmpty()) {
                 PropertiesComponent.getInstance().setList(PROPERTIES_KEY + mavenProject.getDisplayName(), lastSelected);
             } else {
                 PropertiesComponent.getInstance().unsetValue(PROPERTIES_KEY + mavenProject.getDisplayName());

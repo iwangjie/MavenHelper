@@ -13,14 +13,15 @@ import java.util.Map;
  */
 public class MyListNode {
 	private static final Logger LOG = Logger.getInstance(MyListNode.class);
+	private static final long UNCOMPUTED = -2L;
 
 	protected final String artifactKey;
 	private List<MavenArtifactNode> artifacts;
 	@Nullable
 	protected MavenArtifactNode rightArtifact;
 	protected boolean conflict;
-	private Long size;
-	private Long totalSize;
+	private volatile long sizeKb = UNCOMPUTED;
+	private volatile long totalSizeKb = UNCOMPUTED;
 	private String groupId;
 	private String artifactId;
 
@@ -41,32 +42,40 @@ public class MyListNode {
 	}
 
 	public long getSize() {
-		if (size == null) {
-			if (rightArtifact != null) {
-				size = rightArtifact.getArtifact().getFile().length() / 1024;
-			} else {
-				size = -1L;
-			}
+		long cached = sizeKb;
+		if (cached != UNCOMPUTED) {
+			return cached;
 		}
-		return size;
+
+		long computed;
+		if (rightArtifact != null) {
+			if (rightArtifact.getArtifact().getFile() == null) {
+				computed = 0L;
+			} else {
+				computed = rightArtifact.getArtifact().getFile().length() / 1024;
+			}
+		} else {
+			computed = -1L;
+		}
+		sizeKb = computed;
+		return computed;
 	}
 
 	public long getTotalSize() {
-		if (totalSize == null) {
-			totalSize = getTotalSize(rightArtifact);
+		long cached = totalSizeKb;
+		if (cached != UNCOMPUTED) {
+			return cached;
 		}
-		return totalSize;
+		return getSize();
 	}
 
-	private long getTotalSize(MavenArtifactNode current) {
-		if (current == null) {
-			return -1;
-		}
-		long size = current.getArtifact().getFile().length() / 1024;
-		for (MavenArtifactNode dependency : current.getDependencies()) {
-			size += getTotalSize(dependency);
-		}
-		return size;
+	void setSizes(long sizeKb, long totalSizeKb) {
+		this.sizeKb = sizeKb;
+		this.totalSizeKb = totalSizeKb;
+	}
+
+	boolean hasComputedTotalSize() {
+		return totalSizeKb != UNCOMPUTED;
 	}
 
 	private void initRightArtifact() {

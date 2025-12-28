@@ -11,6 +11,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.idea.maven.project.MavenProjectsManager;
 
 import java.util.List;
+import java.util.Objects;
 
 public class Goal extends DomainObject {
 	private String commandLine;
@@ -43,5 +44,21 @@ public class Goal extends DomainObject {
 		}
 
 		return ContainerUtil.newArrayList(StringUtil.tokenize(new CommandLineTokenizer(cmd)));
+	}
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (!(o instanceof Goal goal)) {
+			return false;
+		}
+		return Objects.equals(commandLine, goal.commandLine);
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(commandLine);
 	}
 }

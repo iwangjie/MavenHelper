@@ -5,12 +5,12 @@ import com.intellij.ide.BrowserUtil;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.diagnostic.Logger;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.ui.*;
 import com.intellij.ui.components.JBList;
 import krasa.mavenhelper.Donate;
 import krasa.mavenhelper.model.ApplicationSettings;
 import krasa.mavenhelper.model.Goal;
-import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 
 import javax.swing.*;
@@ -42,6 +42,7 @@ public class ApplicationSettingsForm {
 	private JSplitPane split;
 	private JCheckBox enableDelete;
 	private JCheckBox resolveWorkspaceArtifactsCheckBox;
+	private JCheckBox enableMavenPluginGoalDiscovery;
 	private JLabel searchBackgroundColorNameLabel;
 	private JLabel searchBackgroundColorPickerLabel;
 	private JLabel conflictsForegroundColorNameLabel;
@@ -197,7 +198,7 @@ public class ApplicationSettingsForm {
 		GoalEditor editor = new GoalEditor("New Goal", "", settings1, false, null, null);
 		if (editor.showAndGet()) {
 			String s = editor.getCmd();
-			if (StringUtils.isNotBlank(s)) {
+			if (!StringUtil.isEmptyOrSpaces(s)) {
 				o = new Goal(s);
 			}
 		}
@@ -320,6 +321,7 @@ public class ApplicationSettingsForm {
 		useIgnoredPoms.setSelected(data.isUseIgnoredPoms());
 		enableDelete.setSelected(data.isEnableDelete());
 		resolveWorkspaceArtifactsCheckBox.setSelected(data.isResolveWorkspaceArtifacts());
+		enableMavenPluginGoalDiscovery.setSelected(data.isEnableMavenPluginGoalDiscovery());
 		useTerminalCommand.setSelected(data.isUseTerminalCommand());
 		terminalCommand.setText(data.getTerminalCommand());
 		initActionsInEditorCheckBox.setSelected(data.isInitializeEditorPopups());
@@ -331,6 +333,7 @@ public class ApplicationSettingsForm {
 		data.setUseIgnoredPoms(useIgnoredPoms.isSelected());
 		data.setEnableDelete(enableDelete.isSelected());
 		data.setResolveWorkspaceArtifacts(resolveWorkspaceArtifactsCheckBox.isSelected());
+		data.setEnableMavenPluginGoalDiscovery(enableMavenPluginGoalDiscovery.isSelected());
 		data.setUseTerminalCommand(useTerminalCommand.isSelected());
 		data.setTerminalCommand(terminalCommand.getText());
 		data.setInitializeEditorPopups(initActionsInEditorCheckBox.isSelected());
@@ -342,6 +345,7 @@ public class ApplicationSettingsForm {
 		if (useIgnoredPoms.isSelected() != data.isUseIgnoredPoms()) return true;
 		if (enableDelete.isSelected() != data.isEnableDelete()) return true;
 		if (resolveWorkspaceArtifactsCheckBox.isSelected() != data.isResolveWorkspaceArtifacts()) return true;
+		if (enableMavenPluginGoalDiscovery.isSelected() != data.isEnableMavenPluginGoalDiscovery()) return true;
 		if (useTerminalCommand.isSelected() != data.isUseTerminalCommand()) return true;
 		if (terminalCommand.getText() != null ? !terminalCommand.getText().equals(data.getTerminalCommand()) : data.getTerminalCommand() != null)
 			return true;

@@ -7,13 +7,14 @@ import org.jetbrains.idea.maven.model.MavenArtifactNode;
  * @author Vojtech Krasa
  */
 public class MyTreeUserObject {
+	private static final long UNCOMPUTED = -2L;
 
 	private MavenArtifactNode mavenArtifactNode;
 
 	boolean showOnlyVersion = false;
 	boolean highlight;
-	private Long size;
-	private Long totalSize;
+	private volatile long sizeKb = UNCOMPUTED;
+	private volatile long totalSizeKb = UNCOMPUTED;
 
 	public MyTreeUserObject(MavenArtifactNode mavenArtifactNode) {
 		this.mavenArtifactNode = mavenArtifactNode;
@@ -38,24 +39,31 @@ public class MyTreeUserObject {
 	}
 
 	public long getSize() {
-		if (size == null) {
-			size = getArtifact().getFile().length() / 1024;
+		long cached = sizeKb;
+		if (cached != UNCOMPUTED) {
+			return cached;
 		}
-		return size;
+
+		long computed;
+		if (getArtifact().getFile() == null) {
+			computed = 0L;
+		} else {
+			computed = getArtifact().getFile().length() / 1024;
+		}
+		sizeKb = computed;
+		return computed;
 	}
 
 	public long getTotalSize() {
-		if (totalSize == null) {
-			totalSize = getTotalSize(mavenArtifactNode);
+		long cached = totalSizeKb;
+		if (cached != UNCOMPUTED) {
+			return cached;
 		}
-		return totalSize;
+		return getSize();
 	}
 
-	private long getTotalSize(MavenArtifactNode current) {
-		long size = current.getArtifact().getFile().length() / 1024;
-		for (MavenArtifactNode dependency : current.getDependencies()) {
-			size += getTotalSize(dependency);
-		}
-		return size;
+	void setSizes(long sizeKb, long totalSizeKb) {
+		this.sizeKb = sizeKb;
+		this.totalSizeKb = totalSizeKb;
 	}
 }

@@ -9,6 +9,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.Project;
 import com.intellij.util.PathUtil;
+import krasa.mavenhelper.MavenPluginMojoCacheService;
 import krasa.mavenhelper.MavenHelperApplicationService;
 import krasa.mavenhelper.icons.MyIcons;
 import krasa.mavenhelper.model.ApplicationSettings;
@@ -19,8 +20,6 @@ import org.jetbrains.idea.maven.execution.MavenRunConfiguration;
 import org.jetbrains.idea.maven.execution.MavenRunConfigurationType;
 import org.jetbrains.idea.maven.model.MavenPlugin;
 import org.jetbrains.idea.maven.project.actions.ReimportProjectAction;
-import org.jetbrains.idea.maven.utils.MavenArtifactUtil;
-import org.jetbrains.idea.maven.utils.MavenPluginInfo;
 
 import javax.swing.*;
 import java.util.ArrayList;
@@ -31,8 +30,6 @@ import java.util.Set;
 @SuppressWarnings("ComponentNotRegistered")
 public class MainMavenActionGroup extends ActionGroup implements DumbAware {
 	static final Logger LOG = Logger.getInstance(MainMavenActionGroup.class);
-
-	private Set<String> pluginGoalsSet = new HashSet<>();
 
 	public MainMavenActionGroup() {
 	}
@@ -64,14 +61,21 @@ public class MainMavenActionGroup extends ActionGroup implements DumbAware {
 			addGoals(result, mavenProjectInfo);
 			separator(result);
 
-			List<DefaultActionGroup> mavenActionGroups = getPlugins(mavenProjectInfo);
+			ApplicationSettings state = getState();
+			Set<String> pluginGoalsSet = state.isEnableMavenPluginGoalDiscovery() ? new HashSet<>() : null;
+			List<DefaultActionGroup> mavenActionGroups = state.isEnableMavenPluginGoalDiscovery()
+				? getPlugins(project, mavenProjectInfo, pluginGoalsSet)
+				: List.of();
 
-			addPluginAwareActions(result, mavenActionGroups, mavenProjectInfo);
+			separator(result);
+			addPluginAwareActions(result, pluginGoalsSet, mavenProjectInfo);
 			separator(result);
 
-			addPlugins(result, mavenActionGroups);
+			if (state.isEnableMavenPluginGoalDiscovery()) {
+				addPlugins(result, mavenActionGroups);
+				separator(result);
+			}
 
-			separator(result);
 			addReimport(result, mavenProjectInfo);
 			result.add(getCreateCustomGoalAction(mavenProjectInfo));
 
@@ -149,22 +153,21 @@ public class MainMavenActionGroup extends ActionGroup implements DumbAware {
 		return MavenHelperApplicationService.getInstance().getState();
 	}
 
-	private void addPluginAwareActions(List<AnAction> anActions, List<DefaultActionGroup> mavenActionGroups, MavenProjectInfo mavenProject) {
-		assert mavenActionGroups != null; // just to be sure that pluginGoalsSet was initialized
+	private void addPluginAwareActions(List<AnAction> anActions, @Nullable Set<String> pluginGoalsSet, MavenProjectInfo mavenProject) {
 		for (Goal goal : getState().getPluginAwareGoals().getGoals()) {
-			if (pluginGoalsSet.contains(goal.getCommandLine())) {
+			if (pluginGoalsSet == null || pluginGoalsSet.contains(goal.getCommandLine())) {
 				anActions.add(createGoalRunAction(goal, getRunIcon(), false, mavenProject));
 			}
 		}
 	}
 
-	private List<DefaultActionGroup> getPlugins(MavenProjectInfo mavenProject) {
+	private List<DefaultActionGroup> getPlugins(Project project, MavenProjectInfo mavenProject, @NotNull Set<String> pluginGoalsSet) {
 		List<DefaultActionGroup> mavenActionGroups = new ArrayList<>();
-        List<MavenPlugin> plugins = mavenProject.mavenProject.getDeclaredPlugins();
+		List<MavenPlugin> plugins = mavenProject.mavenProject.getDeclaredPlugins();
 		for (var mavenPlugin : plugins) {
 			DefaultActionGroup plugin = new DefaultActionGroup(mavenPlugin.getArtifactId(), true);
 			plugin.getTemplatePresentation().setIcon(getIcon());
-			addPluginGoals(mavenPlugin, plugin, mavenProject);
+			addPluginGoals(project, mavenPlugin, plugin, mavenProject, pluginGoalsSet);
 			mavenActionGroups.add(plugin);
 		}
 
@@ -179,13 +182,11 @@ public class MainMavenActionGroup extends ActionGroup implements DumbAware {
 		return MyIcons.PHASES_CLOSED;
 	}
 
-	private void addPluginGoals(MavenPlugin mavenPlugin, DefaultActionGroup pluginGroup, MavenProjectInfo mavenProject) {
-		MavenPluginInfo pluginInfo = MavenArtifactUtil.readPluginInfo(mavenProject.mavenProject.getLocalRepository(), mavenPlugin.getMavenId());
-		if (pluginInfo != null) {
-			for (MavenPluginInfo.Mojo mojo : pluginInfo.getMojos()) {
-				pluginGoalsSet.add(mojo.getDisplayName());
-				pluginGroup.add(createGoalRunAction(new Goal(mojo.getDisplayName()), MyIcons.PLUGIN_GOAL, true, mavenProject));
-			}
+	private void addPluginGoals(Project project, MavenPlugin mavenPlugin, DefaultActionGroup pluginGroup, MavenProjectInfo mavenProject, Set<String> pluginGoalsSet) {
+		List<String> mojos = MavenPluginMojoCacheService.getInstance(project).getMojoDisplayNames(mavenProject.mavenProject, mavenPlugin);
+		for (String mojo : mojos) {
+			pluginGoalsSet.add(mojo);
+			pluginGroup.add(createGoalRunAction(new Goal(mojo), MyIcons.PLUGIN_GOAL, true, mavenProject));
 		}
 	}
 

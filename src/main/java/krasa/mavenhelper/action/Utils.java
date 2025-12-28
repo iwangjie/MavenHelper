@@ -11,7 +11,6 @@ import com.intellij.openapi.vfs.VirtualFileManager;
 import com.intellij.psi.PsiClassOwner;
 import com.intellij.psi.PsiFile;
 import krasa.mavenhelper.model.ApplicationSettings;
-import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.maven.model.MavenConstants;
 import org.jetbrains.idea.maven.project.MavenProject;
@@ -20,8 +19,6 @@ import org.jetbrains.idea.maven.utils.actions.MavenActionUtil;
 
 import java.io.File;
 import java.util.List;
-
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 public class Utils {
 	private static final Logger LOG = com.intellij.openapi.diagnostic.Logger.getInstance(Utils.class);
@@ -123,7 +120,7 @@ public class Utils {
 				packageName = ((PsiClassOwner) psiFile).getPackageName();
 			}
 			String name = psiFile.getName();
-			name = StringUtils.substringBefore(name, ".");
+			name = substringBefore(name, '.');
 
 			if (isNotBlank(packageName) && isNotBlank(name)) {
 				result = packageName + "." + name;
@@ -136,7 +133,7 @@ public class Utils {
 	}
 
 	public static String getTestArgumentWithoutMethod(AnActionEvent e, PsiFile psiFile) {
-		return StringUtils.substringBefore(getTestArgument(psiFile, ConfigurationContext.getFromContext(e.getDataContext())), "#");
+		return substringBefore(getTestArgument(psiFile, ConfigurationContext.getFromContext(e.getDataContext())), '#');
 	}
 
 
@@ -150,5 +147,16 @@ public class Utils {
 		return text;
 	}
 
+	private static boolean isNotBlank(@Nullable String s) {
+		return s != null && !s.isBlank();
+	}
+
+	private static String substringBefore(String text, char separator) {
+		if (text == null) {
+			return null;
+		}
+		int index = text.indexOf(separator);
+		return index >= 0 ? text.substring(0, index) : text;
+	}
 
 }

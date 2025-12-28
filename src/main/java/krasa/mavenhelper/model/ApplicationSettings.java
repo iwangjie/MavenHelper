@@ -5,12 +5,10 @@ import com.intellij.psi.PsiFile;
 import com.intellij.ui.JBColor;
 import com.intellij.ui.SimpleTextAttributes;
 import com.intellij.util.xmlb.annotations.Transient;
-import com.rits.cloning.Cloner;
 import krasa.mavenhelper.MavenHelperApplicationService;
 import krasa.mavenhelper.action.MavenProjectInfo;
 import krasa.mavenhelper.action.Utils;
 import krasa.mavenhelper.gui.AliasRealEditor;
-import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.maven.model.MavenConstants;
@@ -22,6 +20,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class ApplicationSettings extends DomainObject implements Cloneable {
 	private static final Collection<String> BASIC_PHASES = MavenConstants.BASIC_PHASES;
@@ -50,6 +49,7 @@ public class ApplicationSettings extends DomainObject implements Cloneable {
 	private boolean initializeEditorPopups = true;
 	private boolean initializeProjectPopups = true;
 	private boolean initializeMavenGroupPopups = true;
+	private boolean enableMavenPluginGoalDiscovery = false;
 
 	public ApplicationSettings() {
 		Goals pluginAwareGoals = new Goals();
@@ -156,9 +156,43 @@ public class ApplicationSettings extends DomainObject implements Cloneable {
 
 	@Override
 	public ApplicationSettings clone() {
-		Cloner cloner = new Cloner();
-		cloner.nullInsteadOfClone();
-		return cloner.deepClone(this);
+		ApplicationSettings copy = new ApplicationSettings();
+		copy.version = version;
+		copy.useIgnoredPoms = useIgnoredPoms;
+		copy.goals = copyGoals(goals);
+		copy.pluginAwareGoals = copyGoals(pluginAwareGoals);
+		copy.aliases = copyAliases(aliases);
+		copy.enableDelete = enableDelete;
+		copy.resolveWorkspaceArtifacts = resolveWorkspaceArtifacts;
+		copy.searchBackgroundColor = searchBackgroundColor;
+		copy.setConflictsForegroundColor(conflictsForegroundColor);
+		copy.useTerminalCommand = useTerminalCommand;
+		copy.terminalCommand = terminalCommand;
+		copy.initializeEditorPopups = initializeEditorPopups;
+		copy.initializeProjectPopups = initializeProjectPopups;
+		copy.initializeMavenGroupPopups = initializeMavenGroupPopups;
+		copy.enableMavenPluginGoalDiscovery = enableMavenPluginGoalDiscovery;
+		return copy;
+	}
+
+	private static Goals copyGoals(@NotNull Goals source) {
+		Goals copy = new Goals();
+		List<Goal> goals = new ArrayList<>(source.getGoals().size());
+		for (Goal goal : source.getGoals()) {
+			goals.add(new Goal(goal.getCommandLine()));
+		}
+		copy.setGoals(goals);
+		return copy;
+	}
+
+	private static Aliases copyAliases(@NotNull Aliases source) {
+		Aliases copy = new Aliases();
+		List<Alias> aliases = new ArrayList<>(source.getAliases().size());
+		for (Alias alias : source.getAliases()) {
+			aliases.add(new Alias(alias.getFrom(), alias.getTo()));
+		}
+		copy.setAliases(aliases);
+		return copy;
 	}
 
 	@Transient
@@ -194,7 +228,7 @@ public class ApplicationSettings extends DomainObject implements Cloneable {
 				s = s.replace(CURRENT_MODULE_NAME, artifactId);
 		}
 		if (s.contains(CURRENT_CLASS_MACRO)) {
-			String name = StringUtils.substringBefore(psiFile.getName(), ".");
+			String name = fileNameWithoutExtension(psiFile.getName());
 			s = s.replace(CURRENT_CLASS_MACRO, name);
 		}
 		if (s.contains(CURRENT_FULL_CLASS_MACRO)) {
@@ -207,7 +241,7 @@ public class ApplicationSettings extends DomainObject implements Cloneable {
 				to = className.replace(".", "#");
 			}
 			if (Utils.NOT_RESOLVED.equals(to)) {
-				to = StringUtils.substringBefore(psiFile.getName(), ".");
+				to = fileNameWithoutExtension(psiFile.getName());
 			}
 			s = s.replace(CURRENT_CLASS_WITH_METHOD_MACRO, to);
 		}
@@ -219,6 +253,11 @@ public class ApplicationSettings extends DomainObject implements Cloneable {
 			s = s.replace(CURRENT_FULL_CLASS_WITH_METHOD_MACRO, to);
 		}
 		return AliasRealEditor.alias(s, mavenProjectInfo, manager);
+	}
+
+	private static @NotNull String fileNameWithoutExtension(@NotNull String name) {
+		int dotIndex = name.lastIndexOf('.');
+		return dotIndex > 0 ? name.substring(0, dotIndex) : name;
 	}
 
 
@@ -302,5 +341,59 @@ public class ApplicationSettings extends DomainObject implements Cloneable {
 
 	public void setInitializeMavenGroupPopups(boolean initializeMavenGroupPopups) {
 		this.initializeMavenGroupPopups = initializeMavenGroupPopups;
+	}
+
+	public boolean isEnableMavenPluginGoalDiscovery() {
+		return enableMavenPluginGoalDiscovery;
+	}
+
+	public void setEnableMavenPluginGoalDiscovery(boolean enableMavenPluginGoalDiscovery) {
+		this.enableMavenPluginGoalDiscovery = enableMavenPluginGoalDiscovery;
+	}
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (!(o instanceof ApplicationSettings that)) {
+			return false;
+		}
+		return version == that.version
+			&& useIgnoredPoms == that.useIgnoredPoms
+			&& enableDelete == that.enableDelete
+			&& resolveWorkspaceArtifacts == that.resolveWorkspaceArtifacts
+			&& searchBackgroundColor == that.searchBackgroundColor
+			&& conflictsForegroundColor == that.conflictsForegroundColor
+			&& useTerminalCommand == that.useTerminalCommand
+			&& initializeEditorPopups == that.initializeEditorPopups
+			&& initializeProjectPopups == that.initializeProjectPopups
+			&& initializeMavenGroupPopups == that.initializeMavenGroupPopups
+			&& enableMavenPluginGoalDiscovery == that.enableMavenPluginGoalDiscovery
+			&& Objects.equals(goals, that.goals)
+			&& Objects.equals(pluginAwareGoals, that.pluginAwareGoals)
+			&& Objects.equals(aliases, that.aliases)
+			&& Objects.equals(terminalCommand, that.terminalCommand);
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(
+			version,
+			useIgnoredPoms,
+			goals,
+			pluginAwareGoals,
+			aliases,
+			enableDelete,
+			resolveWorkspaceArtifacts,
+			searchBackgroundColor,
+			conflictsForegroundColor,
+			useTerminalCommand,
+			terminalCommand,
+			initializeEditorPopups,
+			initializeProjectPopups,
+			initializeMavenGroupPopups,
+			enableMavenPluginGoalDiscovery
+		);
 	}
 }

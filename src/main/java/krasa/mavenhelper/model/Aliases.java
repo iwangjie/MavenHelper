@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 public class Aliases extends DomainObject {
 	private List<Alias> aliases = new ArrayList<Alias>();
@@ -62,4 +63,19 @@ public class Aliases extends DomainObject {
 		return stringStringHashMap;
 	}
 
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (!(o instanceof Aliases aliases1)) {
+			return false;
+		}
+		return Objects.equals(aliases, aliases1.aliases);
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(aliases);
+	}
 }

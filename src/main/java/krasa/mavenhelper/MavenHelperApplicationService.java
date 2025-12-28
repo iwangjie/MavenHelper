@@ -16,7 +16,6 @@ import krasa.mavenhelper.action.debug.MainMavenDebugActionGroup;
 import krasa.mavenhelper.icons.MyIcons;
 import krasa.mavenhelper.model.ApplicationSettings;
 import krasa.mavenhelper.model.Goal;
-import org.apache.commons.text.WordUtils;
 import org.jetbrains.annotations.NotNull;
 
 @State(name = "MavenRunHelperPro", storages = {@Storage("mavenRunHelperPro.xml")})
@@ -68,12 +67,30 @@ public class MavenHelperApplicationService implements PersistentStateComponent<A
 	}
 
 	private String getActionId(Goal goal) {
-		return "MavenRunHelperPro" + WordUtils.capitalizeFully(goal.getCommandLine()).replaceAll(" ", "");
+		return "MavenRunHelperPro" + actionIdSuffix(goal.getCommandLine());
 	}
 
 	private String getDebugActionId(Goal goal) {
-		return "MavenRunHelperProDebug" + WordUtils.capitalizeFully(goal.getCommandLine()).replaceAll(" ", "");
+		return "MavenRunHelperProDebug" + actionIdSuffix(goal.getCommandLine());
 
+	}
+
+	private static @NotNull String actionIdSuffix(@NotNull String commandLine) {
+		StringBuilder result = new StringBuilder(commandLine.length());
+		boolean nextUpper = true;
+		for (int i = 0; i < commandLine.length(); i++) {
+			char c = commandLine.charAt(i);
+			if (Character.isLetterOrDigit(c)) {
+				result.append(nextUpper ? Character.toUpperCase(c) : c);
+				nextUpper = false;
+			} else {
+				nextUpper = true;
+			}
+		}
+		if (result.isEmpty()) {
+			return "Goal";
+		}
+		return result.toString();
 	}
 
 	private void addActionGroup(ActionGroup actionGroup, String name) {

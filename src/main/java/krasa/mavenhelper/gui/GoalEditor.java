@@ -21,20 +21,18 @@ import com.intellij.openapi.ui.DialogWrapper;
 import com.intellij.openapi.ui.popup.*;
 import com.intellij.openapi.ui.popup.util.BaseListPopupStep;
 import com.intellij.openapi.util.Disposer;
+import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.util.ui.StatusText;
+import krasa.mavenhelper.MavenPluginMojoCacheService;
 import krasa.mavenhelper.action.Utils;
 import krasa.mavenhelper.model.Alias;
 import krasa.mavenhelper.model.ApplicationSettings;
 import krasa.mavenhelper.model.Goal;
 import krasa.mavenhelper.model.Goals;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.text.StringEscapeUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.maven.model.MavenPlugin;
 import org.jetbrains.idea.maven.project.MavenProject;
-import org.jetbrains.idea.maven.utils.MavenArtifactUtil;
-import org.jetbrains.idea.maven.utils.MavenPluginInfo;
 
 import javax.swing.*;
 import java.awt.*;
@@ -65,7 +63,7 @@ public class GoalEditor extends DialogWrapper {
 		GoalEditor editor = new GoalEditor(title, goal.getCommandLine(), settings1, false, null, null);
 		if (editor.showAndGet()) {
 			String s = editor.getCmd();
-			if (StringUtils.isNotBlank(s)) {
+			if (!StringUtil.isEmptyOrSpaces(s)) {
 				goal.setCommandLine(s);
 			}
 			return goal;
@@ -104,20 +102,19 @@ public class GoalEditor extends DialogWrapper {
 
 			if (dataContext != null) {
 				MavenProject mavenProject = Utils.getMavenProject(dataContext);
-				if (mavenProject != null) {
+				if (mavenProject != null && project != null) {
 					List<ListItem> listItems = new ArrayList<>();
+					MavenPluginMojoCacheService cache = MavenPluginMojoCacheService.getInstance(project);
 					for (MavenPlugin mavenPlugin : mavenProject.getDeclaredPlugins()) {
-						MavenPluginInfo pluginInfo = MavenArtifactUtil.readPluginInfo(mavenProject.getLocalRepository(), mavenPlugin.getMavenId());
-						if (pluginInfo != null) {
-							boolean first = true;
-							for (MavenPluginInfo.Mojo mojo : pluginInfo.getMojos()) {
-								ListItem listItem = new ListItem(mojo.getDisplayName());
-								if (first) {
-									listItem.separatorAbove = new ListItem(mavenPlugin.getArtifactId());
-								}
-								listItems.add(listItem);
-								first = false;
+						List<String> mojos = cache.getMojoDisplayNames(mavenProject, mavenPlugin);
+						boolean first = true;
+						for (String mojo : mojos) {
+							ListItem listItem = new ListItem(mojo);
+							if (first) {
+								listItem.separatorAbove = new ListItem(mavenPlugin.getArtifactId());
 							}
+							listItems.add(listItem);
+							first = false;
 						}
 					}
 					goalsPanel.add(listPopup("Plugin Goal...", listItems.toArray(new ListItem[0]), false));
@@ -489,15 +486,13 @@ public class GoalEditor extends DialogWrapper {
 			return FINAL_CHOICE;
 		}
 
-		// //		@Override
-		public PopupStep onChosen(ListItem listItem, boolean finalChoice, int eventModifiers) {
-			return onChosen(listItem, finalChoice);
-		}
-
 		@Nullable
 		@Override
 		public String getTooltipTextFor(ListItem listItem) {
-			return StringEscapeUtils.escapeHtml4(listItem.description);
+			if (listItem.description == null) {
+				return null;
+			}
+			return StringUtil.escapeXmlEntities(listItem.description);
 		}
 
 		@Override

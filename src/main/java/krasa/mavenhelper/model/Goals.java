@@ -2,6 +2,7 @@ package krasa.mavenhelper.model;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 public class Goals extends DomainObject {
 	private List<Goal> goals = new ArrayList<Goal>();
@@ -55,5 +56,21 @@ public class Goals extends DomainObject {
 
 	public boolean remove(Object goal) {
 		return goals.remove(goal);
+	}
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (!(o instanceof Goals goals1)) {
+			return false;
+		}
+		return Objects.equals(goals, goals1.goals);
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(goals);
 	}
 }

@@ -1,4 +1,4 @@
-<idea-plugin require-restart="true" version="2" url="https://github.com/krasa/MavenHelper">
+<idea-plugin version="2" url="https://github.com/krasa/MavenHelper">
 
     <id>MavenRunHelperPro</id>
     <name>Maven Helper Pro</name>
@@ -33,13 +33,6 @@
         <br> <br>
         <a href="https://www.paypal.me/VojtechKrasa">Donations</a> | <a href="https://github.com/krasa/MavenHelper/">GitHub</a> | <a href="https://github.com/krasa/MavenHelper/issues">Issues</a>
       ]]></description>
-
-
-    <application-components>
-    </application-components>
-
-    <project-components>
-    </project-components>
 
     <actions>
         <!-- Add your actions here -->

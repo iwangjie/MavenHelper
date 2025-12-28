@@ -6,6 +6,8 @@ import com.intellij.ide.CommonActionsManager;
 import com.intellij.ide.DefaultTreeExpander;
 import com.intellij.ide.util.PropertiesComponent;
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.actionSystem.ActionToolbar;
 import com.intellij.openapi.actionSystem.DefaultActionGroup;
 import com.intellij.openapi.actionSystem.ex.ActionManagerEx;
@@ -27,7 +29,6 @@ import krasa.mavenhelper.analyzer.action.LeftTreePopupHandler;
 import krasa.mavenhelper.analyzer.action.ListKeyStrokeAdapter;
 import krasa.mavenhelper.analyzer.action.ListPopupHandler;
 import krasa.mavenhelper.analyzer.action.RightTreePopupHandler;
-import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.idea.maven.model.MavenArtifact;
@@ -48,9 +49,12 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.io.File;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BooleanSupplier;
 
 /**
  * @author Vojtech Krasa
@@ -78,12 +82,18 @@ public class GuiForm implements Disposable {
 
 	private static final int UPDATE_DEBOUNCE_MS = 150;
 	private static final int AUTO_EXPAND_NODE_LIMIT = 2000;
+	private static final int RIGHT_TREE_UPDATE_DEBOUNCE_MS = 75;
+	private static final int RIGHT_TREE_MAX_PATHS = 200;
+	private static final int RIGHT_TREE_AUTO_EXPAND_NODE_LIMIT = 800;
 
 	private final Project project;
 	private final VirtualFile file;
 	private final MavenHelperApplicationService applicationService = MavenHelperApplicationService.getInstance();
 	private MavenProject mavenProject;
 	private final Alarm updateAlarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, this);
+	private final AtomicLong uiUpdateSeq = new AtomicLong();
+	private final Alarm rightTreeUpdateAlarm = new Alarm(Alarm.ThreadToUse.SWING_THREAD, this);
+	private final AtomicLong rightTreeUpdateSeq = new AtomicLong();
 	private volatile boolean modelLoading;
 	protected JBList leftPanelList;
 	private MyHighlightingTree rightTree;
@@ -113,10 +123,10 @@ public class GuiForm implements Disposable {
 	protected MyDefaultListModel listDataModel;
 	protected Map<String, List<MavenArtifactNode>> allArtifactsMap;
 	protected Map<String, List<MavenArtifactNode>> allArtifactsMapWithoutTests;
-	protected final DefaultTreeModel rightTreeModel;
-	protected final DefaultTreeModel leftTreeModel;
-	protected final MyDefaultMutableTreeNode rightTreeRoot;
-	protected final MyDefaultMutableTreeNode leftTreeRoot;
+	protected DefaultTreeModel rightTreeModel;
+	protected DefaultTreeModel leftTreeModel;
+	protected MyDefaultMutableTreeNode rightTreeRoot;
+	protected MyDefaultMutableTreeNode leftTreeRoot;
 	protected ListSpeedSearch myListSpeedSearch;
 	protected List<MavenArtifactNode> dependencyTree;
 	protected List<MavenArtifactNode> dependencyTreeWithoutTests;
@@ -124,6 +134,13 @@ public class GuiForm implements Disposable {
 	private List<MyListNode> allArtifactsListNodes = Collections.emptyList();
 	private List<MyListNode> allArtifactsListNodesWithoutTests = Collections.emptyList();
 	private List<MyListNode> conflictArtifactsListNodes = Collections.emptyList();
+	private List<MyListNode> allArtifactsListNodesByArtifactId = Collections.emptyList();
+	private List<MyListNode> allArtifactsListNodesWithoutTestsByArtifactId = Collections.emptyList();
+	private List<MyListNode> conflictArtifactsListNodesByArtifactId = Collections.emptyList();
+	private volatile List<MyListNode> allArtifactsListNodesByDeepSize;
+	private volatile List<MyListNode> allArtifactsListNodesWithoutTestsByDeepSize;
+	private volatile List<MyListNode> conflictArtifactsListNodesByDeepSize;
+	private volatile DependencySizeIndex dependencySizeIndex;
 
 	private boolean notificationShown;
 
@@ -387,10 +404,10 @@ public class GuiForm implements Disposable {
 		allDependenciesAsTreeRadioButton.setSelected(true);
 		searchField.setText(myArtifact.getArtifact().getArtifactId());
 		updateAlarm.cancelAllRequests();
-		updateLeftPanelNow();
-
-		TreeUtils.selectRows(leftTree, leftTreeRoot, myArtifact);
-		leftTree.requestFocus();
+		startLeftPanelUpdate(captureLeftPanelState(), () -> {
+			TreeUtils.selectRows(leftTree, leftTreeRoot, myArtifact);
+			leftTree.requestFocus();
+		});
 	}
 
 	public void switchToLeftTree() {
@@ -407,12 +424,19 @@ public class GuiForm implements Disposable {
 			TreePath selectionPath = e.getPath();
 			if (selectionPath != null) {
 				DefaultMutableTreeNode lastPathComponent = (DefaultMutableTreeNode) selectionPath.getLastPathComponent();
-				MyTreeUserObject userObject = (MyTreeUserObject) lastPathComponent.getUserObject();
+				Object selectedUserObject = lastPathComponent.getUserObject();
+				if (!(selectedUserObject instanceof MyTreeUserObject userObject)) {
+					return;
+				}
 
 				final String key = getArtifactKey(userObject.getArtifact());
-				List<MavenArtifactNode> mavenArtifactNodes = allArtifactsMap.get(key);
+				Map<String, List<MavenArtifactNode>> map = hideTests.isSelected() ? allArtifactsMapWithoutTests : allArtifactsMap;
+				if (map == null) { // can be null while refreshing
+					return;
+				}
+				List<MavenArtifactNode> mavenArtifactNodes = map.get(key);
 				if (mavenArtifactNodes != null) {// can be null while refreshing
-					fillRightTree(mavenArtifactNodes);
+					scheduleUpdateRightTree(mavenArtifactNodes);
 				}
 			}
 		}
@@ -421,37 +445,107 @@ public class GuiForm implements Disposable {
 	private class MyListSelectionListener implements ListSelectionListener {
 		@Override
 		public void valueChanged(ListSelectionEvent e) {
+			if (e.getValueIsAdjusting()) {
+				return;
+			}
 			if (listDataModel.isEmpty() || leftPanelList.getSelectedValue() == null) {
 				return;
 			}
 
 			final MyListNode myListNode = (MyListNode) leftPanelList.getSelectedValue();
-			fillRightTree(myListNode.getArtifacts());
+			scheduleUpdateRightTree(myListNode.getArtifacts());
 		}
 	}
 
-	private void fillRightTree(List<MavenArtifactNode> mavenArtifactNodes) {
-		rightTreeRoot.removeAllChildren();
-		for (MavenArtifactNode mavenArtifactNode : mavenArtifactNodes) {
+	private void scheduleUpdateRightTree(@NotNull List<MavenArtifactNode> mavenArtifactNodes) {
+		long seq = rightTreeUpdateSeq.incrementAndGet();
+		rightTreeUpdateAlarm.cancelAllRequests();
+		if (mavenArtifactNodes.isEmpty()) {
+			rightTreeRoot.removeAllChildren();
+			rightTreeModel.nodeStructureChanged(rightTreeRoot);
+			return;
+		}
+		rightTreeUpdateAlarm.addRequest(() -> startRightTreeUpdate(mavenArtifactNodes, seq), RIGHT_TREE_UPDATE_DEBOUNCE_MS);
+	}
+
+	private void startRightTreeUpdate(@NotNull List<MavenArtifactNode> mavenArtifactNodes, long seq) {
+		ApplicationManager.getApplication().executeOnPooledThread(() -> {
+			RightTreeUpdateResult result = computeRightTreeUpdate(mavenArtifactNodes, seq);
+			ApplicationManager.getApplication().invokeLater(() -> applyRightTreeUpdate(result, seq), ModalityState.any());
+		});
+	}
+
+	@Nullable
+	private RightTreeUpdateResult computeRightTreeUpdate(@NotNull List<MavenArtifactNode> mavenArtifactNodes, long seq) {
+		if (isRightTreeUpdateCancelled(seq)) {
+			return null;
+		}
+
+		int totalPaths = mavenArtifactNodes.size();
+		int shownPaths = Math.min(totalPaths, RIGHT_TREE_MAX_PATHS);
+
+		NodeCounter nodeCounter = new NodeCounter();
+		List<DefaultMutableTreeNode> children = new ArrayList<>(shownPaths + 1);
+
+		if (totalPaths > shownPaths) {
+			children.add(new DefaultMutableTreeNode("Too many paths (" + totalPaths + "), showing first " + shownPaths + ". Refine search to narrow results."));
+		}
+
+		for (int i = 0; i < shownPaths; i++) {
+			if (isRightTreeUpdateCancelled(seq)) {
+				return null;
+			}
+			MavenArtifactNode mavenArtifactNode = mavenArtifactNodes.get(i);
 			MyTreeUserObject userObject = new MyTreeUserObject(mavenArtifactNode);
 			userObject.showOnlyVersion = true;
-			final DefaultMutableTreeNode newNode = new MyDefaultMutableTreeNode(userObject);
-			fillRightTree(mavenArtifactNode, newNode);
-			rightTreeRoot.add(newNode);
+			DefaultMutableTreeNode newNode = new MyDefaultMutableTreeNode(userObject);
+			nodeCounter.count++;
+			fillRightTree(mavenArtifactNode, newNode, seq, nodeCounter);
+			children.add(newNode);
 		}
-		rightTreeModel.nodeStructureChanged(rightTreeRoot);
-		TreeUtils.expandAll(rightTree);
+
+		boolean autoExpand = nodeCounter.count <= RIGHT_TREE_AUTO_EXPAND_NODE_LIMIT;
+		return new RightTreeUpdateResult(children, autoExpand);
 	}
 
-	private void fillRightTree(MavenArtifactNode mavenArtifactNode, DefaultMutableTreeNode node) {
-		final MavenArtifactNode parent = mavenArtifactNode.getParent();
+	private void applyRightTreeUpdate(@Nullable RightTreeUpdateResult result, long seq) {
+		if (result == null) {
+			return;
+		}
+		if (isRightTreeUpdateCancelled(seq)) {
+			return;
+		}
+
+		rightTreeRoot.removeAllChildren();
+		for (DefaultMutableTreeNode node : result.children) {
+			rightTreeRoot.add(node);
+		}
+		rightTreeModel.nodeStructureChanged(rightTreeRoot);
+		rightTree.expandPath(new TreePath(rightTreeRoot.getPath()));
+		if (result.autoExpand) {
+			TreeUtils.expandAll(rightTree);
+		}
+	}
+
+	private boolean isRightTreeUpdateCancelled(long seq) {
+		return seq != rightTreeUpdateSeq.get() || project.isDisposed();
+	}
+
+	private void fillRightTree(@NotNull MavenArtifactNode mavenArtifactNode, @NotNull DefaultMutableTreeNode node, long seq, @NotNull NodeCounter nodeCounter) {
+		if (isRightTreeUpdateCancelled(seq)) {
+			return;
+		}
+		MavenArtifactNode parent = mavenArtifactNode.getParent();
 		if (parent == null) {
 			return;
 		}
-		final DefaultMutableTreeNode parentDependencyNode = new MyDefaultMutableTreeNode(new MyTreeUserObject(parent));
+		DefaultMutableTreeNode parentDependencyNode = new MyDefaultMutableTreeNode(new MyTreeUserObject(parent));
 		node.add(parentDependencyNode);
-		parentDependencyNode.setParent(node);
-		fillRightTree(parent, parentDependencyNode);
+		nodeCounter.count++;
+		fillRightTree(parent, parentDependencyNode, seq, nodeCounter);
+	}
+
+	private record RightTreeUpdateResult(@NotNull List<DefaultMutableTreeNode> children, boolean autoExpand) {
 	}
 
 	private void initializeModel() {
@@ -459,6 +553,8 @@ public class GuiForm implements Disposable {
 			return;
 		}
 		updateAlarm.cancelAllRequests();
+		rightTreeUpdateAlarm.cancelAllRequests();
+		rightTreeUpdateSeq.incrementAndGet();
 
 		intellijBugLabel.setVisible(false);
 		falsePositive.setVisible(false);
@@ -477,6 +573,9 @@ public class GuiForm implements Disposable {
 			private List<MyListNode> newAllArtifactsListNodes;
 			private List<MyListNode> newAllArtifactsListNodesWithoutTests;
 			private List<MyListNode> newConflictArtifactsListNodes;
+			private List<MyListNode> newAllArtifactsListNodesByArtifactId;
+			private List<MyListNode> newAllArtifactsListNodesWithoutTestsByArtifactId;
+			private List<MyListNode> newConflictArtifactsListNodesByArtifactId;
 			private long buildNanos;
 
 			@Override
@@ -500,6 +599,10 @@ public class GuiForm implements Disposable {
 				newAllArtifactsListNodesWithoutTests = createListNodes(newAllArtifactsMapWithoutTests);
 				newConflictArtifactsListNodes = createVersionConflictListNodes(newAllArtifactsListNodes);
 
+				newAllArtifactsListNodesByArtifactId = sortedCopy(newAllArtifactsListNodes, MyDefaultListModel.ARTIFACT_ID);
+				newAllArtifactsListNodesWithoutTestsByArtifactId = sortedCopy(newAllArtifactsListNodesWithoutTests, MyDefaultListModel.ARTIFACT_ID);
+				newConflictArtifactsListNodesByArtifactId = sortedCopy(newConflictArtifactsListNodes, MyDefaultListModel.ARTIFACT_ID);
+
 				buildNanos = System.nanoTime() - start;
 			}
 
@@ -519,9 +622,16 @@ public class GuiForm implements Disposable {
 				allArtifactsListNodes = newAllArtifactsListNodes;
 				allArtifactsListNodesWithoutTests = newAllArtifactsListNodesWithoutTests;
 				conflictArtifactsListNodes = newConflictArtifactsListNodes;
+				allArtifactsListNodesByArtifactId = newAllArtifactsListNodesByArtifactId;
+				allArtifactsListNodesWithoutTestsByArtifactId = newAllArtifactsListNodesWithoutTestsByArtifactId;
+				conflictArtifactsListNodesByArtifactId = newConflictArtifactsListNodesByArtifactId;
+				allArtifactsListNodesByDeepSize = null;
+				allArtifactsListNodesWithoutTestsByDeepSize = null;
+				conflictArtifactsListNodesByDeepSize = null;
+				dependencySizeIndex = null;
 
 				updateAlarm.cancelAllRequests();
-				updateLeftPanelNow();
+				startLeftPanelUpdate(captureLeftPanelState(), null);
 
 				rightTreeRoot.removeAllChildren();
 				rightTreeModel.reload();
@@ -565,13 +675,37 @@ public class GuiForm implements Disposable {
 		if (modelLoading || dependencyTree == null) {
 			return;
 		}
+		LeftPanelState state = captureLeftPanelState();
 		updateAlarm.cancelAllRequests();
-		updateAlarm.addRequest(() -> {
-			updateLeftPanelNow();
-			if (afterUpdate != null) {
-				afterUpdate.run();
-			}
-		}, UPDATE_DEBOUNCE_MS);
+		updateAlarm.addRequest(() -> startLeftPanelUpdate(state, afterUpdate), UPDATE_DEBOUNCE_MS);
+	}
+
+	@NotNull
+	private LeftPanelState captureLeftPanelState() {
+		LeftPanelMode mode;
+		if (conflictsRadioButton.isSelected()) {
+			mode = LeftPanelMode.CONFLICTS;
+		} else if (allDependenciesAsListRadioButton.isSelected()) {
+			mode = LeftPanelMode.ALL_AS_LIST;
+		} else {
+			mode = LeftPanelMode.ALL_AS_TREE;
+		}
+		return new LeftPanelState(
+			mode,
+			StringUtil.notNullize(searchField.getText()),
+			hideTests.isSelected(),
+			filter.isSelected(),
+			showGroupId.isSelected(),
+			showSize.isSelected()
+		);
+	}
+
+	private void startLeftPanelUpdate(@NotNull LeftPanelState state, @Nullable Runnable afterUpdate) {
+		long seq = uiUpdateSeq.incrementAndGet();
+		ApplicationManager.getApplication().executeOnPooledThread(() -> {
+			LeftPanelUpdateResult result = computeLeftPanelUpdate(state, seq);
+			ApplicationManager.getApplication().invokeLater(() -> applyLeftPanelUpdate(state, result, seq, afterUpdate), ModalityState.any());
+		});
 	}
 
 	private static List<MyListNode> createListNodes(@Nullable Map<String, List<MavenArtifactNode>> map) {
@@ -583,6 +717,15 @@ public class GuiForm implements Disposable {
 			result.add(new MyListNode(entry));
 		}
 		return result;
+	}
+
+	private static <T> @NotNull List<T> sortedCopy(@NotNull List<T> source, @NotNull Comparator<? super T> comparator) {
+		if (source.isEmpty()) {
+			return Collections.emptyList();
+		}
+		List<T> copy = new ArrayList<>(source);
+		copy.sort(comparator);
+		return copy;
 	}
 
 	private List<MyListNode> createVersionConflictListNodes(@Nullable List<MyListNode> listNodes) {
@@ -599,50 +742,183 @@ public class GuiForm implements Disposable {
 		return result;
 	}
 
-	private void updateLeftPanelNow() {
+	@Nullable
+	private LeftPanelUpdateResult computeLeftPanelUpdate(@NotNull LeftPanelState state, long seq) {
 		if (allArtifactsMap == null || dependencyTree == null) {
+			return null;
+		}
+		if (isLeftPanelUpdateCancelled(seq)) {
+			return null;
+		}
+
+		DependencySizeIndex sizeIndex = null;
+		if (state.showSize) {
+			sizeIndex = getOrComputeDependencySizeIndex(seq);
+			if (sizeIndex == null) {
+				return null;
+			}
+		}
+
+		String searchText = state.searchText;
+		if (state.mode == LeftPanelMode.ALL_AS_TREE) {
+			NodeCounter nodeCounter = new NodeCounter();
+			MyDefaultMutableTreeNode root = new MyDefaultMutableTreeNode();
+			fillLeftTree(root, state.hideTests ? dependencyTreeWithoutTests : dependencyTree, searchText, false, nodeCounter, state.filterTree, sizeIndex, seq);
+			sortTree(root, state);
+			return new TreeResult(root, nodeCounter.count);
+		}
+
+		boolean showNoConflictsLabel = state.mode == LeftPanelMode.CONFLICTS && isNoConflicts();
+
+		List<MyListNode> source = getListSourceSorted(state, sizeIndex, seq);
+		if (source == null) {
+			return null;
+		}
+
+		if (StringUtil.isEmptyOrSpaces(searchText)) {
+			return new ListResult(source, showNoConflictsLabel);
+		}
+
+		List<MyListNode> items = new ArrayList<>();
+		for (MyListNode node : source) {
+			if (isLeftPanelUpdateCancelled(seq)) {
+				return null;
+			}
+			if (contains(searchText, node.artifactKey)) {
+				items.add(node);
+			}
+		}
+		return new ListResult(items, showNoConflictsLabel);
+	}
+
+	@Nullable
+	private List<MyListNode> getListSourceSorted(@NotNull LeftPanelState state, @Nullable DependencySizeIndex sizeIndex, long seq) {
+		if (state.mode == LeftPanelMode.CONFLICTS) {
+			if (state.showSize) {
+				if (sizeIndex == null) {
+					return null;
+				}
+				return getOrComputeDeepSizeListNodes(DeepSizeList.CONFLICTS, sizeIndex, seq);
+			}
+			if (state.showGroupId) {
+				return conflictArtifactsListNodes;
+			}
+			return conflictArtifactsListNodesByArtifactId;
+		}
+
+		if (state.showSize) {
+			if (sizeIndex == null) {
+				return null;
+			}
+			return getOrComputeDeepSizeListNodes(state.hideTests ? DeepSizeList.ALL_WITHOUT_TESTS : DeepSizeList.ALL, sizeIndex, seq);
+		}
+		if (state.showGroupId) {
+			return state.hideTests ? allArtifactsListNodesWithoutTests : allArtifactsListNodes;
+		}
+		return state.hideTests ? allArtifactsListNodesWithoutTestsByArtifactId : allArtifactsListNodesByArtifactId;
+	}
+
+	@Nullable
+	private List<MyListNode> getOrComputeDeepSizeListNodes(@NotNull DeepSizeList list, @NotNull DependencySizeIndex sizeIndex, long seq) {
+		List<MyListNode> cached = getDeepSizeListCache(list);
+		if (cached != null) {
+			return cached;
+		}
+
+		synchronized (this) {
+			cached = getDeepSizeListCache(list);
+			if (cached != null) {
+				return cached;
+			}
+
+			List<MyListNode> base = switch (list) {
+				case ALL -> allArtifactsListNodes;
+				case ALL_WITHOUT_TESTS -> allArtifactsListNodesWithoutTests;
+				case CONFLICTS -> conflictArtifactsListNodes;
+			};
+
+			if (!ensureListNodeSizes(base, sizeIndex, seq)) {
+				return null;
+			}
+			if (isLeftPanelUpdateCancelled(seq)) {
+				return null;
+			}
+
+			List<MyListNode> sorted = sortedCopy(base, MyDefaultListModel.DEEP_SIZE);
+			if (isLeftPanelUpdateCancelled(seq)) {
+				return null;
+			}
+			setDeepSizeListCache(list, sorted);
+			return sorted;
+		}
+	}
+
+	private boolean ensureListNodeSizes(@NotNull List<MyListNode> nodes, @NotNull DependencySizeIndex sizeIndex, long seq) {
+		for (MyListNode node : nodes) {
+			if (isLeftPanelUpdateCancelled(seq)) {
+				return false;
+			}
+			if (!node.hasComputedTotalSize()) {
+				sizeIndex.apply(node);
+			}
+		}
+		return !isLeftPanelUpdateCancelled(seq);
+	}
+
+	@Nullable
+	private List<MyListNode> getDeepSizeListCache(@NotNull DeepSizeList list) {
+		return switch (list) {
+			case ALL -> allArtifactsListNodesByDeepSize;
+			case ALL_WITHOUT_TESTS -> allArtifactsListNodesWithoutTestsByDeepSize;
+			case CONFLICTS -> conflictArtifactsListNodesByDeepSize;
+		};
+	}
+
+	private void setDeepSizeListCache(@NotNull DeepSizeList list, @NotNull List<MyListNode> value) {
+		switch (list) {
+			case ALL -> allArtifactsListNodesByDeepSize = value;
+			case ALL_WITHOUT_TESTS -> allArtifactsListNodesWithoutTestsByDeepSize = value;
+			case CONFLICTS -> conflictArtifactsListNodesByDeepSize = value;
+		}
+	}
+
+	private enum DeepSizeList {
+		ALL,
+		ALL_WITHOUT_TESTS,
+		CONFLICTS,
+	}
+
+	private void applyLeftPanelUpdate(@NotNull LeftPanelState state, @Nullable LeftPanelUpdateResult result, long seq, @Nullable Runnable afterUpdate) {
+		if (result == null) {
+			return;
+		}
+		if (isLeftPanelUpdateCancelled(seq)) {
+			return;
+		}
+		if (modelLoading || dependencyTree == null || allArtifactsMap == null) {
 			return;
 		}
 
 		intellijBugLabel.setVisible(false);
 		falsePositive.setVisible(false);
-		listDataModel.clear();
-		leftTreeRoot.removeAllChildren();
-
-		final String searchFieldText = searchField.getText();
 		boolean conflictsWarning = false;
+		boolean showNoConflictsLabel;
 
-		boolean showNoConflictsLabel = false;
-		if (conflictsRadioButton.isSelected()) {
-			for (MyListNode node : conflictArtifactsListNodes) {
-				if (contains(searchFieldText, node.artifactKey)) {
-					listDataModel.add(node);
-				}
-			}
-			sortList();
-			showNoConflictsLabel = isNoConflicts();
+		if (result instanceof ListResult listResult) {
+			showNoConflictsLabel = listResult.showNoConflictsLabel;
+			listDataModel.setItems(listResult.items);
 			leftPanelLayout.show(leftPanelWrapper, "list");
-		} else if (allDependenciesAsListRadioButton.isSelected()) {  //list
-			List<MyListNode> nodes = hideTests.isSelected() ? allArtifactsListNodesWithoutTests : allArtifactsListNodes;
-			for (MyListNode node : nodes) {
-				if (contains(searchFieldText, node.artifactKey)) {
-					listDataModel.add(node);
-				}
-			}
-			sortList();
-			showNoConflictsLabel = false;
-			leftPanelLayout.show(leftPanelWrapper, "list");
-		} else { // tree
-			NodeCounter nodeCounter = new NodeCounter();
-			fillLeftTree(leftTreeRoot, hideTests.isSelected() ? dependencyTreeWithoutTests : dependencyTree, searchFieldText, false, nodeCounter);
-			sortTree();
-			leftTreeModel.nodeStructureChanged(leftTreeRoot);
-			if (nodeCounter.count <= AUTO_EXPAND_NODE_LIMIT) {
+		} else if (result instanceof TreeResult treeResult) {
+			leftTreeRoot = treeResult.root;
+			leftTreeModel.setRoot(leftTreeRoot);
+			leftTreeModel.reload();
+			if (treeResult.nodeCount <= AUTO_EXPAND_NODE_LIMIT) {
 				TreeUtils.expandAll(leftTree);
 			}
-
 			showNoConflictsLabel = false;
 			leftPanelLayout.show(leftPanelWrapper, "allAsTree");
+		} else {
+			return;
 		}
 
 		if (conflictsWarning) {
@@ -658,29 +934,42 @@ public class GuiForm implements Disposable {
 		filter.setVisible(allDependenciesAsTreeRadioButton.isSelected());
 		noConflictsWarningLabelScrollPane.setVisible(conflictsWarning);
 		noConflictsLabel.setVisible(showNoConflictsLabel);
+
+		if (afterUpdate != null) {
+			afterUpdate.run();
+		}
 	}
 
 	private boolean isNoConflicts() {
 		return conflictArtifactsListNodes.isEmpty();
 	}
 
-	private void sortTree() {
-		if (showSize.isSelected()) {
-			leftTreeRoot.sortBySize(MyDefaultMutableTreeNode.DEEP_SIZE);
-		} else if (showGroupId.isSelected()) {
-			leftTreeRoot.sortBySize(MyDefaultMutableTreeNode.GROUP_ID);
-		} else {
-			leftTreeRoot.sortBySize(MyDefaultMutableTreeNode.ARTIFACT_ID);
-		}
+	private boolean isLeftPanelUpdateCancelled(long seq) {
+		return seq != uiUpdateSeq.get() || project.isDisposed();
 	}
 
-	private void sortList() {
-		if (showSize.isSelected()) {
-			listDataModel.sort(MyDefaultListModel.DEEP_SIZE);
-		} else if (showGroupId.isSelected()) {
-			listDataModel.sort(MyDefaultListModel.GROUP_ID);
+	@Nullable
+	private DependencySizeIndex getOrComputeDependencySizeIndex(long seq) {
+		DependencySizeIndex cached = dependencySizeIndex;
+		if (cached != null) {
+			return cached;
+		}
+
+		DependencySizeIndex computed = DependencySizeIndex.compute(dependencyTree, () -> isLeftPanelUpdateCancelled(seq));
+		if (computed == null) {
+			return null;
+		}
+		dependencySizeIndex = computed;
+		return computed;
+	}
+
+	private void sortTree(@NotNull MyDefaultMutableTreeNode root, @NotNull LeftPanelState state) {
+		if (state.showSize) {
+			root.sortBySize(MyDefaultMutableTreeNode.DEEP_SIZE);
+		} else if (state.showGroupId) {
+			root.sortBySize(MyDefaultMutableTreeNode.GROUP_ID);
 		} else {
-			listDataModel.sort(MyDefaultListModel.ARTIFACT_ID);
+			root.sortBySize(MyDefaultMutableTreeNode.ARTIFACT_ID);
 		}
 	}
 
@@ -688,21 +977,126 @@ public class GuiForm implements Disposable {
 		private int count;
 	}
 
-	private boolean fillLeftTree(DefaultMutableTreeNode parent, List<MavenArtifactNode> dependencyTree, String searchFieldText, boolean parentMatched, NodeCounter nodeCounter) {
-		boolean search = StringUtils.isNotBlank(searchFieldText);
+	private static final class DependencySizeIndex {
+		private final IdentityHashMap<MavenArtifactNode, Long> sizeKbByNode;
+		private final IdentityHashMap<MavenArtifactNode, Long> totalKbByNode;
+
+		private DependencySizeIndex(
+			@NotNull IdentityHashMap<MavenArtifactNode, Long> sizeKbByNode,
+			@NotNull IdentityHashMap<MavenArtifactNode, Long> totalKbByNode
+		) {
+			this.sizeKbByNode = sizeKbByNode;
+			this.totalKbByNode = totalKbByNode;
+		}
+
+		@Nullable
+		static DependencySizeIndex compute(@NotNull List<MavenArtifactNode> roots, @NotNull BooleanSupplier cancelled) {
+			IdentityHashMap<MavenArtifactNode, Boolean> visited = new IdentityHashMap<>();
+			ArrayDeque<MavenArtifactNode> stack = new ArrayDeque<>();
+			ArrayDeque<MavenArtifactNode> postOrder = new ArrayDeque<>();
+
+			for (MavenArtifactNode root : roots) {
+				if (cancelled.getAsBoolean()) {
+					return null;
+				}
+				if (root == null) {
+					continue;
+				}
+				stack.push(root);
+				while (!stack.isEmpty()) {
+					if (cancelled.getAsBoolean()) {
+						return null;
+					}
+					MavenArtifactNode node = stack.pop();
+					if (visited.put(node, Boolean.TRUE) != null) {
+						continue;
+					}
+					postOrder.push(node);
+					for (MavenArtifactNode dep : node.getDependencies()) {
+						if (dep != null) {
+							stack.push(dep);
+						}
+					}
+				}
+			}
+
+			IdentityHashMap<MavenArtifactNode, Long> sizeKbByNode = new IdentityHashMap<>(visited.size() * 2);
+			IdentityHashMap<MavenArtifactNode, Long> totalKbByNode = new IdentityHashMap<>(visited.size() * 2);
+
+			while (!postOrder.isEmpty()) {
+				if (cancelled.getAsBoolean()) {
+					return null;
+				}
+				MavenArtifactNode node = postOrder.pop();
+				long sizeKb = computeSizeKb(node);
+				sizeKbByNode.put(node, sizeKb);
+
+				long totalKb = sizeKb;
+				for (MavenArtifactNode dep : node.getDependencies()) {
+					Long depTotal = totalKbByNode.get(dep);
+					if (depTotal != null) {
+						totalKb += depTotal;
+					}
+				}
+				totalKbByNode.put(node, totalKb);
+			}
+
+			return new DependencySizeIndex(sizeKbByNode, totalKbByNode);
+		}
+
+		private static long computeSizeKb(@NotNull MavenArtifactNode node) {
+			File file = node.getArtifact().getFile();
+			if (file == null) {
+				return 0;
+			}
+			return file.length() / 1024;
+		}
+
+		void apply(@NotNull MyListNode node) {
+			MavenArtifactNode right = node.getRightArtifact();
+			if (right == null) {
+				node.setSizes(0, 0);
+				return;
+			}
+			node.setSizes(sizeKbOf(right), totalKbOf(right));
+		}
+
+		void apply(@NotNull MyTreeUserObject userObject, @NotNull MavenArtifactNode node) {
+			userObject.setSizes(sizeKbOf(node), totalKbOf(node));
+		}
+
+		private long totalKbOf(@NotNull MavenArtifactNode node) {
+			Long total = totalKbByNode.get(node);
+			return total != null ? total : sizeKbOf(node);
+		}
+
+		private long sizeKbOf(@NotNull MavenArtifactNode node) {
+			Long size = sizeKbByNode.get(node);
+			return size != null ? size : computeSizeKb(node);
+		}
+	}
+
+	private boolean fillLeftTree(DefaultMutableTreeNode parent, List<MavenArtifactNode> dependencyTree, String searchFieldText, boolean parentMatched, NodeCounter nodeCounter, boolean filterTree, @Nullable DependencySizeIndex sizeIndex, long seq) {
+		boolean search = !StringUtil.isEmptyOrSpaces(searchFieldText);
 		boolean hasAddedNodes = false;
 
 		for (MavenArtifactNode mavenArtifactNode : dependencyTree) {
+			if (isLeftPanelUpdateCancelled(seq)) {
+				return false;
+			}
 			boolean directMatch = false;
 			MyTreeUserObject treeUserObject = new MyTreeUserObject(mavenArtifactNode);
+			if (sizeIndex != null) {
+				sizeIndex.apply(treeUserObject, mavenArtifactNode);
+			}
 			if (search && contains(searchFieldText, mavenArtifactNode)) {
 				directMatch = true;
 				treeUserObject.highlight = true;
 			}
 			final DefaultMutableTreeNode newNode = new MyDefaultMutableTreeNode(treeUserObject);
-			boolean childAdded = fillLeftTree(newNode, mavenArtifactNode.getDependencies(), searchFieldText, directMatch || parentMatched, nodeCounter);
+			boolean childAdded = fillLeftTree(newNode, mavenArtifactNode.getDependencies(), searchFieldText, directMatch || parentMatched, nodeCounter, filterTree, sizeIndex, seq);
 
-			if (!search || !filter.isSelected() || directMatch || childAdded || parentMatched) {
+			if (!search || !filterTree || directMatch || childAdded || parentMatched) {
 				parent.add(newNode);
 				nodeCounter.count++;
 				hasAddedNodes = true;
@@ -711,13 +1105,38 @@ public class GuiForm implements Disposable {
 		return hasAddedNodes;
 	}
 
+	private enum LeftPanelMode {
+		CONFLICTS,
+		ALL_AS_LIST,
+		ALL_AS_TREE,
+	}
+
+	private record LeftPanelState(
+		@NotNull LeftPanelMode mode,
+		@NotNull String searchText,
+		boolean hideTests,
+		boolean filterTree,
+		boolean showGroupId,
+		boolean showSize
+	) {
+	}
+
+	private sealed interface LeftPanelUpdateResult permits ListResult, TreeResult {
+	}
+
+	private record ListResult(@NotNull List<MyListNode> items, boolean showNoConflictsLabel) implements LeftPanelUpdateResult {
+	}
+
+	private record TreeResult(@NotNull MyDefaultMutableTreeNode root, int nodeCount) implements LeftPanelUpdateResult {
+	}
+
 	private boolean contains(String searchFieldText, MavenArtifactNode mavenArtifactNode) {
 		MavenArtifact artifact = mavenArtifactNode.getArtifact();
 		return contains(searchFieldText, getArtifactKey(artifact));
 	}
 
 	private boolean contains(String searchFieldText, String artifactKey) {
-		return StringUtils.isBlank(searchFieldText) || StringUtil.containsIgnoreCase(artifactKey, searchFieldText);
+		return StringUtil.isEmptyOrSpaces(searchFieldText) || StringUtil.containsIgnoreCase(artifactKey, searchFieldText);
 	}
 
 	private boolean hasConflicts(List<MavenArtifactNode> nodes) {

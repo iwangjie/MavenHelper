@@ -1,4 +1,6 @@
 package krasa.mavenhelper.model;
+
+import java.util.Objects;
 public class Alias extends DomainObject {
 	private String from;
 	private String to;
@@ -38,4 +40,19 @@ public class Alias extends DomainObject {
 		return commandLine;
 	}
 
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) {
+			return true;
+		}
+		if (!(o instanceof Alias alias)) {
+			return false;
+		}
+		return Objects.equals(from, alias.from) && Objects.equals(to, alias.to);
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(from, to);
+	}
 }

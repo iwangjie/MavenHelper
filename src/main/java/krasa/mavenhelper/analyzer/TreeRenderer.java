@@ -54,6 +54,10 @@ public class TreeRenderer extends ColoredTreeCellRenderer {
 									  int row, boolean hasFocus) {
 		DefaultMutableTreeNode treeNode = (DefaultMutableTreeNode) value;
 		Object userObject = treeNode.getUserObject();
+		if (userObject instanceof String message) {
+			append(message, SimpleTextAttributes.GRAYED_ATTRIBUTES);
+			return;
+		}
 		if (!(userObject instanceof MyTreeUserObject))
 			return;
 

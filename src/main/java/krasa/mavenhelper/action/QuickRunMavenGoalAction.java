@@ -9,6 +9,7 @@ import com.intellij.execution.executors.DefaultRunExecutor;
 import com.intellij.icons.AllIcons;
 import com.intellij.ide.actions.QuickSwitchSchemeAction;
 import com.intellij.openapi.actionSystem.*;
+import com.intellij.openapi.actionSystem.impl.SimpleDataContext;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.DumbAware;
 import com.intellij.openapi.project.DumbAwareAction;
@@ -306,22 +307,23 @@ public class QuickRunMavenGoalAction extends QuickSwitchSchemeAction implements 
 
 			@NotNull
 			private AnActionEvent getAnActionEvent(@NotNull AnActionEvent e) {
-				DataContext dataContext = new DataContext() {
-					@Nullable
-					@Override
-					public Object getData(@NotNull String s) {
-						if (Location.DATA_KEY.is(s)) {
-							PsiFile data = LangDataKeys.PSI_FILE.getData(e.getDataContext());
-							ConfigurationContext fromContext = ConfigurationContext.getFromContext(e.getDataContext());
-							PsiFile psiFile = PsiManager.getInstance(e.getProject()).findFile(mavenProjectInfo.mavenProject.getFile());
-							MavenProjectsManager manager = MavenProjectsManager.getInstanceIfCreated(e.getProject());
-							return new MavenGoalLocation(e.getProject(), psiFile, goal.parse(data, fromContext, mavenProjectInfo, manager));
-						}
-						return e.getDataContext().getData(s);
-					}
-				};
+				Project project = e.getProject();
+				if (project == null) {
+					return e;
+				}
 
-				return AnActionEvent.createFromDataContext("MavenRunHelperPro.CreateRunConfiguration", e.getPresentation(), dataContext);
+				PsiFile currentFile = LangDataKeys.PSI_FILE.getData(e.getDataContext());
+				ConfigurationContext fromContext = ConfigurationContext.getFromContext(e.getDataContext());
+				PsiFile pomPsiFile = null;
+				if (mavenProjectInfo.mavenProject != null && mavenProjectInfo.mavenProject.getFile() != null) {
+					pomPsiFile = PsiManager.getInstance(project).findFile(mavenProjectInfo.mavenProject.getFile());
+				}
+				MavenProjectsManager manager = MavenProjectsManager.getInstanceIfCreated(project);
+
+				MavenGoalLocation location = new MavenGoalLocation(project, pomPsiFile, goal.parse(currentFile, fromContext, mavenProjectInfo, manager));
+				DataContext dataContext = SimpleDataContext.getSimpleContext(Location.DATA_KEY, location, e.getDataContext());
+				Presentation presentation = createAction.getTemplatePresentation().clone();
+				return AnActionEvent.createEvent(createAction, dataContext, presentation, "MavenRunHelperPro.CreateRunConfiguration", ActionUiKind.POPUP, e.getInputEvent());
 			}
 		}
 	}
